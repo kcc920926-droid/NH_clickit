@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CaptureIT Report Editor</title>
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <header class="app-header">
+    <img src="icons/captureit-icon-48.png" alt="" width="40" height="40">
+    <div><h1>CaptureIT</h1><p>테스트 증적 생성</p></div>
+    <span id="save-status" class="save-status">저장됨</span>
+    <span id="header-evidence-count" class="header-evidence-count" aria-live="polite"></span>
+    <div class="more-menu-wrap">
+      <button id="open-more-menu" class="icon-only more-menu-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-label="더보기">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm0 7.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM12 21a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z" fill="currentColor"></path></svg>
+      </button>
+      <div id="more-menu" class="more-menu" role="menu" hidden>
+        <button id="open-report-switch" class="more-menu-item" type="button" role="menuitem">작업 보고서 변경</button>
+        <button id="open-viewer" class="more-menu-item" type="button" role="menuitem">QA 뷰어 열기</button>
+        <button id="open-storage-detail" class="more-menu-item" type="button" role="menuitem">저장 정보 보기</button>
+        <button id="open-llm-settings" class="more-menu-item" type="button" role="menuitem">AI 설정</button>
+        <button id="open-save-project-menu" class="more-menu-item" type="button" role="menuitem">현재 작업 백업</button>
+      </div>
+    </div>
+  </header>
+
+  <nav id="wizard-stage-nav" aria-label="작성 단계">
+    <button class="stage-tab active" data-stage-index="0" id="stage-tab-capture" type="button">1 · 캡처 시작</button>
+    <button class="stage-tab" data-stage-index="1" id="stage-tab-mapping-result" type="button">2 · 매핑 및 결과 입력</button>
+    <button class="stage-tab" data-stage-index="2" id="stage-tab-completion" type="button">3 · 완료</button>
+  </nav>
+
+  <div id="guidance-banner" class="guidance-banner" aria-live="polite" hidden></div>
+
+  <main class="layout">
+    <section id="stage-capture" class="panel capture-first-panel wizard-stage" aria-labelledby="capture-first-heading">
+      <!-- 캡처 모드(이벤트/컨텍스트) 선택 UI는 기본 화면에서 제거했다(iOS 원칙 1, 2 - 좋은 기본값을
+           제공하고 사용자가 시스템 구조를 몰라도 목적을 달성하게 한다). 내부 로직은 항상 'event'
+           모드로 동작하며, 이 <select>는 기존 session.mode 저장 계약을 그대로 유지하기 위한
+           값 보관용 hidden 필드다(테스트/저장 로직 변경 없음). -->
+      <select id="capture-mode" hidden><option value="event" selected>이벤트 모드</option><option value="context">컨텍스트 모드</option></select>
+      <span id="session-status" class="status-pill status-pill-off">RECORDING</span>
+      <h1 id="capture-first-heading" class="capture-idle-title">테스트 화면을 녹화하세요</h1>
+      <p id="capture-mode-hint" class="capture-idle-subtitle">테스트를 평소처럼 진행하면 화면, DOM, API 맥락이 자동으로 저장됩니다.</p>
+      <button id="toggle-session" class="button button-primary capture-idle-cta" type="button" data-primary-action="recording-session">녹화 시작</button>
+      <label class="button button-secondary file-button capture-idle-secondary">기존 이미지 불러오기<input id="image-import" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+      <p class="hint capture-shortcut-hint">중요한 영역은 Ctrl+Shift+클릭으로 직접 지정할 수 있습니다.</p>
+      <div id="recording-summary" class="recording-summary" hidden aria-live="polite">
+        <div class="recording-summary-item"><span id="recording-summary-screens" class="recording-summary-value">0</span><span class="recording-summary-label">화면</span></div>
+        <div class="recording-summary-item"><span id="recording-summary-inputs" class="recording-summary-value">0</span><span class="recording-summary-label">입력 흐름</span></div>
+        <div class="recording-summary-item"><span id="recording-summary-results" class="recording-summary-value">0</span><span class="recording-summary-label">결과 메시지</span></div>
+        <div class="recording-summary-item"><span id="recording-summary-ai-ready" class="recording-summary-value">0</span><span class="recording-summary-label">AI 입력용 이미지</span></div>
+      </div>
+    </section>
+
+    <section id="stage-mapping-result" class="wizard-stage" hidden aria-labelledby="mapping-result-heading">
+      <div class="panel-heading">
+        <div><span class="eyebrow">매핑 및 결과 입력</span><h2 id="mapping-result-heading">증적 매핑과 테스트케이스 결과</h2></div>
+      </div>
+      <p id="editor-message" class="message" role="status"></p>
+      <div class="mapping-result-grid">
+        <div class="mapping-result-column">
+          <section id="evidence-drop-zone" class="panel inbox-panel" aria-labelledby="inbox-heading">
+            <div class="panel-heading">
+              <div><span class="eyebrow">증적 수집함</span><h2 id="inbox-heading">수집된 증적</h2></div>
+            </div>
+            <section class="recent-evidence-panel" aria-labelledby="recent-evidence-heading">
+              <div class="recent-evidence-heading">
+                <h3 id="recent-evidence-heading">최근 캡처</h3>
+                <span class="hint">방금 저장된 화면을 먼저 확인합니다.</span>
+              </div>
+              <div id="recent-evidence" class="recent-evidence" aria-live="polite"></div>
+            </section>
+            <input id="evidence-search" class="search" type="search" placeholder="페이지 제목, 트리거, 대상 텍스트 검색" aria-label="증적 검색">
+            <div id="evidence-inbox" class="evidence-grid" aria-live="polite"></div>
+          </section>
+        </div>
+        <div class="mapping-result-column">
+          <section class="panel feature-panel" aria-labelledby="feature-list-heading">
+            <div class="panel-heading">
+              <div><span class="eyebrow">테스트케이스</span><h2 id="feature-list-heading">테스트케이스</h2></div>
+              <button id="add-feature" class="icon-button" type="button" aria-label="테스트케이스 추가">＋</button>
+            </div>
+            <div id="no-feature" class="empty-feature">테스트케이스를 추가하십시오.</div>
+            <div id="feature-list" class="feature-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </div>
+      <svg id="mapping-link-layer" class="mapping-link-layer" aria-hidden="true"></svg>
+
+      <div id="feature-detail-backdrop" class="feature-detail-backdrop" hidden></div>
+      <aside id="feature-mapping-target" class="feature-detail-drawer" aria-labelledby="feature-detail-heading" hidden>
+        <div class="panel-heading">
+          <div><span class="eyebrow">선택된 증적</span><h2 id="feature-detail-heading">선택된 증적</h2></div>
+          <button id="close-feature-detail" class="icon-button" type="button" aria-label="닫기">✕</button>
+        </div>
+        <div class="feature-ai-actions">
+          <button id="request-recommendations" class="button button-secondary" type="button">증적 설명 생성</button>
+          <button id="request-test-case-description" class="button button-primary" type="button">테스트케이스 설명 자동 생성</button>
+        </div>
+        <p id="feature-mapping-guidance" class="hint" hidden></p>
+        <div id="recommendation-list" class="recommendations" aria-live="polite"></div>
+        <div id="mapped-evidence" class="evidence-grid compact feature-drop-target" aria-live="polite"></div>
+      </aside>
+    </section>
+
+    <section id="stage-completion" class="wizard-stage completion-panel" hidden aria-labelledby="completion-heading">
+      <h1 id="completion-heading" class="capture-idle-title">증적 문서가 준비되었습니다</h1>
+      <p class="capture-idle-subtitle">수집된 화면 증적과 검증 결과를 확인한 뒤 문서를 생성하세요.</p>
+      <div class="completion-summary" aria-live="polite">
+        <div class="completion-summary-item"><span id="completion-summary-features" class="completion-summary-value">0</span><span class="completion-summary-label">검증 항목</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-pass" class="completion-summary-value">0</span><span class="completion-summary-label">PASS</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-fail" class="completion-summary-value">0</span><span class="completion-summary-label">FAIL</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-na" class="completion-summary-value">0</span><span class="completion-summary-label">N/A</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-evidence" class="completion-summary-value">0</span><span class="completion-summary-label">포함 증적</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-ai-images" class="completion-summary-value">0</span><span class="completion-summary-label">AI 입력 이미지</span></div>
+      </div>
+      <button id="export-report" class="button button-primary completion-primary-cta" type="button">증적 문서 생성</button>
+      <div class="completion-secondary-actions">
+        <button id="preview-report" class="button button-secondary" type="button">미리보기</button>
+        <button id="open-save-project" class="button button-secondary" type="button">현재 작업 백업</button>
+      </div>
+      <section class="warning-box" aria-labelledby="warning-heading">
+        <h3 id="warning-heading">검증 안내</h3>
+        <ul id="validation-warnings"></ul>
+        <p class="hint">경고가 있어도 미리보기와 내보내기는 계속할 수 있습니다.</p>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="save-project-dialog" class="save-project-dialog">
+    <form method="dialog">
+      <div class="preview-toolbar">
+        <strong>프로젝트로 저장</strong>
+        <button id="cancel-save-project" class="button button-secondary" type="button">취소</button>
+      </div>
+      <div class="form-grid report-fields">
+        <label>프로젝트명<input id="project-name" type="text" required></label>
+        <label>보고서명<input id="report-title" type="text"></label>
+        <label>작성자<input id="report-author" type="text"></label>
+        <label class="wide">변경 목적<textarea id="change-purpose" rows="2"></textarea></label>
+        <label class="wide">수정 내용 요약<textarea id="change-summary" rows="2"></textarea></label>
+        <label class="wide">형상·체크아웃 개요<textarea id="configuration-overview" rows="2"></textarea></label>
+      </div>
+      <div class="save-project-actions">
+        <button id="submit-save-project" class="button button-primary" type="submit">프로젝트로 저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="evidence-detail-dialog" class="evidence-detail-dialog">
+    <div class="preview-toolbar">
+      <strong id="evidence-detail-title">증적 상세</strong>
+      <div class="detail-toolbar-actions">
+        <button id="previous-evidence-detail" class="icon-button" type="button" aria-label="이전 증적">‹</button>
+        <button id="next-evidence-detail" class="icon-button" type="button" aria-label="다음 증적">›</button>
+        <button id="delete-evidence-detail" class="icon-only danger" type="button" title="이 증적 삭제" aria-label="이 증적 삭제">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </button>
+        <button id="close-evidence-detail" class="button button-secondary" type="button">닫기</button>
+      </div>
+    </div>
+    <div class="evidence-detail-body">
+      <img id="evidence-detail-image" alt="증적 이미지">
+      <pre id="evidence-detail-meta"></pre>
+    </div>
+  </dialog>
+
+  <dialog id="storage-detail-dialog" class="storage-detail-dialog">
+    <div class="preview-toolbar">
+      <strong>저장 위치 정보</strong>
+      <button id="close-storage-detail" class="button button-secondary" type="button">닫기</button>
+    </div>
+    <dl class="storage-list">
+      <div><dt>초안 저장소</dt><dd id="storage-location">브라우저 내부 저장소</dd></div>
+      <div><dt>보고서 ID</dt><dd id="storage-report-id">-</dd></div>
+      <div><dt>증적 수</dt><dd id="storage-evidence-count">0</dd></div>
+      <div><dt>마지막 저장</dt><dd id="storage-last-saved-at">-</dd></div>
+      <div><dt>마지막 ZIP</dt><dd id="storage-last-export-name">-</dd></div>
+      <div><dt>다운로드 위치</dt><dd id="storage-last-export-path">-</dd></div>
+    </dl>
+    <div class="storage-actions">
+      <button id="show-last-download" class="button button-secondary" type="button">마지막 ZIP 열기</button>
+      <button id="show-download-folder" class="button button-secondary" type="button">다운로드 폴더 열기</button>
+      <button id="export-evidence-only" class="button button-secondary" type="button">증적만 ZIP</button>
+    </div>
+    <p class="hint">초안은 Edge 프로필의 확장 저장소에 자동 저장됩니다. 제출용 파일은 사용자가 선택한 다운로드 경로에 ZIP으로 생성됩니다.</p>
+  </dialog>
+
+  <dialog id="report-switch-dialog" class="report-switch-dialog">
+    <div class="preview-toolbar">
+      <strong>작업 보고서 상태</strong>
+      <button id="close-report-switch" class="button button-secondary" type="button">닫기</button>
+    </div>
+    <div class="report-toolbar">
+      <label>작업 보고서<select id="report-select"></select></label>
+      <button id="new-report" class="button button-secondary" type="button">새 보고서</button>
+      <button id="delete-report" class="button button-danger" type="button">보고서 삭제</button>
+    </div>
+  </dialog>
+
+  <dialog id="llm-settings-dialog" class="llm-settings-dialog">
+    <div class="preview-toolbar">
+      <strong>LLM 설정</strong>
+      <button id="close-llm-settings" class="button button-secondary" type="button">닫기</button>
+    </div>
+    <p class="hint">텍스트 맥락으로 후보를 줄인 뒤 후보와 인접 캡처 이미지만 전송합니다. 자동 연결·자동 판정은 하지 않습니다.</p>
+    <div class="form-grid llm-grid">
+      <label class="wide">API 엔드포인트<input id="llm-endpoint" type="url" inputmode="url" placeholder="http://ai-driven-gw.aihb.kube.test.nhbank/v1/messages"><span id="llm-endpoint-hint" class="hint" hidden>NH AI Gateway/OpenAI compatible은 Adapter 선택에 따라 자동으로 고정됩니다. Raw JSON template에서만 직접 입력할 수 있습니다.</span></label>
+      <label>API Key<input id="llm-api-key" type="password" autocomplete="off" placeholder="payload api_key"></label>
+      <label>Model<input id="llm-model" type="text" placeholder="모델명"></label>
+      <label>Adapter<select id="llm-adapter">
+        <option value="nh-ai-gateway">NH AI Gateway · 내부망 liteLLM (/v1/messages)</option>
+        <option value="openai-compatible">OpenAI compatible · 외부망 공식 OpenAI API</option>
+        <option value="raw-json-template">Raw JSON template</option>
+      </select></label>
+      <label class="wide">Raw JSON template<textarea id="llm-template" rows="4" spellcheck="false" placeholder='{"api_key":"{{apiKey}}","model":"{{model}}","messages":{{payload}}}'></textarea></label>
+    </div>
+    <div class="llm-actions">
+      <button id="test-llm-connection" class="button button-secondary" type="button">연결 테스트</button>
+      <button id="test-llm-recommendation" class="button button-secondary" type="button">추천 요청 테스트</button>
+    </div>
+    <pre id="llm-diagnostics" class="diagnostic-pre" aria-live="polite"></pre>
+  </dialog>
+
+  <dialog id="quick-mapping-dialog" class="quick-mapping-dialog">
+    <form method="dialog">
+      <div class="preview-toolbar">
+        <strong>빠른 매핑</strong>
+        <button id="cancel-quick-mapping" class="button button-secondary" type="button">취소</button>
+      </div>
+      <div class="form-grid">
+        <label class="wide">대상 테스트케이스<select id="quick-mapping-feature"></select></label>
+        <label class="wide">검증 내용<textarea id="quick-mapping-verification" rows="2" required></textarea></label>
+        <label class="wide">기대 결과<textarea id="quick-mapping-expected-result" rows="2"></textarea></label>
+        <label class="wide">실제 결과<textarea id="quick-mapping-actual-result" rows="2"></textarea></label>
+      </div>
+      <div class="save-project-actions">
+        <button id="submit-quick-mapping" class="button button-primary" type="submit">매핑</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="report-draft-suggestion-dialog" class="report-draft-suggestion-dialog">
+    <div class="preview-toolbar">
+      <strong>LLM 보고서 초안 제안</strong>
+      <button id="dismiss-draft-suggestion" class="button button-secondary" type="button">무시</button>
+    </div>
+    <div class="form-grid">
+      <label class="wide">보고서명<input id="draft-suggestion-title" type="text"></label>
+      <label class="wide">형상·체크아웃 개요<textarea id="draft-suggestion-overview" rows="3"></textarea></label>
+    </div>
+    <div class="save-project-actions">
+      <button id="approve-draft-suggestion" class="button button-primary" type="button">승인</button>
+    </div>
+  </dialog>
+
+  <script src="shared/domain.js"></script>
+  <script src="shared/storage.js"></script>
+  <script src="shared/report.js"></script>
+  <script src="shared/zip.js"></script>
+  <script src="shared/screenshot-cropper.js"></script>
+  <script src="shared/evidence-step-builder.js"></script>
+  <script src="shared/llm.js"></script>
+  <script src="shared/wizard-stage.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

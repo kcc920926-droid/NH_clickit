@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Secrets / local env
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+extension.zip
+artifacts/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log

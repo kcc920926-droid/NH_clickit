@@ -1,0 +1,19 @@
+{
+  "name": "captureit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Closed-network Edge extension for ordered QA evidence capture and reporting",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "serve:fixture": "node scripts/serve-fixture.mjs",
+    "smoke:edge": "node tests/edge-smoke.mjs",
+    "smoke:chrome": "node tests/chrome-smoke.mjs",
+    "smoke:llm": "node tests/llm-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "fast-check": "4.8.0"
+  }
+}

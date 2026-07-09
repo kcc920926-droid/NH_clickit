@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "CaptureIT",
+  "version": "0.1.0",
+  "description": "사내 QA 증적을 순서와 맥락으로 수집하고 보고서로 생성합니다.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "downloads",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "CaptureIT",
+    "default_icon": {
+      "16": "icons/captureit-icon-16.png",
+      "32": "icons/captureit-icon-32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/captureit-icon-16.png",
+    "32": "icons/captureit-icon-32.png",
+    "48": "icons/captureit-icon-48.png",
+    "128": "icons/captureit-icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "shared/page-context.js",
+        "shared/event-policy.js",
+        "shared/interaction-settler.js",
+        "shared/dom-diff.js",
+        "shared/content-controller.js",
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  }
+}
