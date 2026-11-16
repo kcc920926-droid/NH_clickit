@@ -199,6 +199,6 @@ test('증적 세트와 화면은 끌어다 놓기 대상이 아니고, 연결은
   assert.doesNotMatch(source, /addEventListener\('dragstart'/);
   assert.doesNotMatch(source, /application\/x-captureit-evidence-ids/);
   assert.doesNotMatch(css, /cursor:\s*grab/);
-  assert.match(extractFunctionBody(source, 'captureGraphCard'), /mapToFeatureButton\(group\.evidenceIds\)/);
-  assert.match(extractFunctionBody(source, 'captureNode'), /mapToFeatureButton\(\[evidence\.id\]\)/);
+  assert.match(extractFunctionBody(source, 'captureGraphCard'), /linkTargetMenu\(group\.evidenceIds, \{ group \}\)/);
+  assert.match(extractFunctionBody(source, 'captureNode'), /toggleEvidenceSelection\(evidence\.id, pickInput\.checked\)/, '사진은 골라서 한 번에 연결한다');
 });

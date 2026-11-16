@@ -627,15 +627,15 @@ test('evidence review controls use icon buttons, and the connect control shows i
   const script = fs.readFileSync(editorScriptPath, 'utf8');
   const css = fs.readFileSync(editorCssPath, 'utf8');
   const featureCardBody = extractFunctionBody(script, 'featureCard');
-  const mapToFeatureButtonBody = extractFunctionBody(script, 'mapToFeatureButton');
+  const linkMenuBody = extractFunctionBody(script, 'linkTargetMenu');
 
   assert.match(script, /function\s+iconSvg\s*\(/, 'iconSvg helper should create inline SVG icons');
   assert.match(script, /function\s+iconButton\s*\(/, 'iconButton helper should create labelled icon-only buttons');
   assert.match(featureCardBody, /iconButton\('위로 이동',\s*'arrow-up'/, 'feature up control should use an icon button');
   assert.match(featureCardBody, /iconButton\('아래로 이동',\s*'arrow-down'/, 'feature down control should use an icon button');
   assert.match(featureCardBody, /iconButton\(`\$\{itemWord\(\)\} 삭제`,\s*'trash'/, 'feature delete control should use an icon button');
-  assert.match(mapToFeatureButtonBody, /button\.setAttribute\('aria-label',\s*`\$\{itemWord\(\)\}에 연결`\)/, 'mapping control should keep an accessible label');
-  assert.match(mapToFeatureButtonBody, /button\.replaceChildren\(iconSvg\('link'\), '연결'\)/, 'the only way to connect gets an icon and a visible label (big target)');
+  assert.match(linkMenuBody, /trigger\.setAttribute\('aria-label', `\$\{itemWord\(\)\}에 연결`\)/, 'connect control keeps an accessible label');
+  assert.match(linkMenuBody, /trigger\.replaceChildren\(iconSvg\('link'\), options\.label \|\| '연결',/, 'the connect control shows an icon and a visible label');
   assert.match(css, /\.icon-only/, 'icon-only controls should have shared styling');
   assert.match(css, /\.sr-only/, 'icon buttons should have a screen-reader-only utility available');
   assert.doesNotMatch(css, /\.mapping-link-layer\s*{[^}]*height:\s*100%/,

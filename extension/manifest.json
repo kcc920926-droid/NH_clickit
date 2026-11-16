@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CaptureIT",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "업무 화면을 순서와 맥락으로 모아 QA 결과·테스트 결과서·PoC 기록·화면 설명서로 만듭니다.",
   "permissions": [
     "activeTab",

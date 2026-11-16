@@ -76,7 +76,7 @@ test('보고서 초안 요청은 테스트케이스마다 이미지를 몇 장�
 test('자동 AI 기능은 연결이 확인된 뒤에만 돌고, AI 호출은 시간 제한이 있다', () => {
   assert.match(editorSource, /function autoRunAiPipelineForFeature\(feature\) \{\s*\n\s*if \(!llmReady\) return;/);
   assert.match(editorSource, /function autoRequestSessionTitleForSession\(sessionId\) \{\s*\n\s*if \(!sessionId \|\| !llmReady\) return;/);
-  assert.match(editorSource, /async function requestReportDraftSuggestion\(\) \{\s*\n\s*if \(!llmReady\) return;/);
+  assert.match(editorSource, /async function requestReportDraftSuggestion\(options = \{\}\) \{[\s\S]*?if \(!llmReady\) throw new Error\(/);
   assert.match(editorSource, /AbortSignal\.timeout\(LLM_TIMEOUT_MS\)/);
   assert.match(editorSource, /await setLlmReady\(Boolean\(summary\.ok\)\)/, '연결 테스트 결과로 자동 AI 기능을 켜고 끈다');
   const exportBody = editorSource.slice(editorSource.indexOf('async function exportReport()'), editorSource.indexOf('async function exportEvidenceOnly()'));
@@ -110,4 +110,15 @@ test('AI 답이 출력 한도에 걸리면 한도를 늘려 한 번만 다시 �
   const body = editorSource.slice(start, editorSource.indexOf('\n  }\n', start));
   assert.match(body, /sendLlmRequest\(body, settings, CaptureITLlm\.DEFAULT_MAX_TOKENS, onStatus\)/);
   assert.match(body, /if \(!error\.outputLimit\) throw error;[\s\S]*?return sendLlmRequest\(body, settings, CaptureITLlm\.RETRY_MAX_TOKENS, onStatus\);/);
+});
+
+test('AI 보고서 초안은 버튼을 눌렀을 때만 요청한다(미리보기마다 창이 불쑥 뜨던 문제)', () => {
+  const html = fs.readFileSync(path.resolve(__dirname, '../extension/editor.html'), 'utf8');
+  const preview = editorSource.slice(editorSource.indexOf('async function previewReport()'), editorSource.indexOf('const REPORT_INFO_FIELDS'));
+  assert.doesNotMatch(preview, /requestReportDraftSuggestion\(/, '미리보기는 AI를 부르지 않는다');
+  const callers = [...editorSource.matchAll(/requestReportDraftSuggestion\(/g)].length;
+  assert.equal(callers, 2, '정의 하나와 버튼 핸들러 하나뿐');
+  assert.match(editorSource, /elements\.suggestReportDraft\.addEventListener\('click', \(\) => withBusy\(elements\.suggestReportDraft,/);
+  const reportInfo = html.match(/<details id="report-info"[\s\S]*?<\/details>/)[0];
+  assert.match(reportInfo, /id="suggest-report-draft"/);
 });

@@ -61,16 +61,10 @@ test('연결 버튼과 고른 테스트케이스 연결은 동일한 도메인 �
 
   // 둘 다 다른 테스트케이스에 연결된 사진을 옮길지 묻는 mapEvidenceIdsWithConfirm을 거쳐 mapEvidenceIds로 간다.
   assert.match(extractFunctionBody(source, 'mapEvidenceIdsWithConfirm'), /await mapEvidenceIds\(targetIds, feature\)/);
-  // 사내 DRM이 끌어다 놓기를 막아 증적 → 테스트케이스 끌어다 놓기 연결은 없앴다. 연결 버튼과
-  // "다음에 누른 테스트케이스에 연결"(selectFeature)이 같은 경로를 탄다.
-  assert.match(extractFunctionBody(source, 'selectFeature'), /\bmapEvidenceIdsWithConfirm\(/);
-
-  const mapToFeatureButtonBody = extractFunctionBody(source, 'mapToFeatureButton');
-  assert.match(
-    mapToFeatureButtonBody,
-    /\bmapEvidenceIdsWithConfirm\(/,
-    'Alternative_Mapping_Control 버튼 핸들러(mapToFeatureButton)는 mapEvidenceIds를 호출해야 한다',
-  );
+  // 사내 DRM이 끌어다 놓기를 막아 끌어다 놓기 연결은 없앴다. "연결 ▾" 메뉴에서 고른 항목도 같은 경로를 탄다.
+  const menuBody = extractFunctionBody(source, 'linkTargetMenu');
+  assert.match(menuBody, /entry\(label, \(\) => mapEvidenceIdsWithConfirm\(ids, feature\)/);
+  assert.match(extractFunctionBody(source, 'linkToNewFeature'), /await mapEvidenceIds\(evidenceIds, feature\);/);
 });
 
 // Task 15.3: Quick_Mapping_Dialog 제출/검증 에러 테스트
@@ -290,7 +284,7 @@ test('captureGraphCard는 세트 연결 해제/삭제 버튼을 헤더 액션 �
   );
   assert.match(
     captureGraphCardBody,
-    /headerActions\.append\(\s*mapToFeatureButton\(group\.evidenceIds\),/,
+    /headerActions\.append\(\s*linkTargetMenu\(group\.evidenceIds, \{ group \}\),/,
     '매핑 버튼도 같은 헤더 액션 컨테이너 안에 있어야 한다',
   );
   assert.match(

@@ -56,12 +56,13 @@ test('설명은 기다리지 않고 바로 뜨고, 열린 대화상자 위에도
 
 test("Hick: 증적 세트에는 '연결'과 접기만 밖에 두고 나머지는 ⋯ 메뉴로", () => {
   const body = functionBody(editor, 'captureGraphCard');
-  assert.match(body, /headerActions\.append\(\s*mapToFeatureButton\(group\.evidenceIds\),\s*overflowMenu\('세트 메뉴'/);
+  assert.match(body, /headerActions\.append\(\s*linkTargetMenu\(group\.evidenceIds, \{ group \}\),\s*overflowMenu\('세트 메뉴'/);
   assert.doesNotMatch(body, /iconButton\('세트 삭제'/);
 });
 
-test("Fitts: 유일한 연결 방법인 '연결' 버튼은 글자를 붙여 크게", () => {
-  assert.match(functionBody(editor, 'mapToFeatureButton'), /button\.replaceChildren\(iconSvg\('link'\), '연결'\);/);
+test("Fitts: 연결 버튼은 글자를 붙여 크게, 사진마다 작은 연결 버튼 대신 고르기 상자", () => {
+  assert.match(functionBody(editor, 'linkTargetMenu'), /trigger\.replaceChildren\(iconSvg\('link'\), options\.label \|\| '연결',/);
+  assert.doesNotMatch(functionBody(editor, 'captureNode'), /linkTargetMenu|mapToFeatureButton/);
 });
 
 test('Tesler: 테스트케이스가 하나뿐이면 고르라고 하지 않고 그리로 연결', () => {

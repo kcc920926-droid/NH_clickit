@@ -105,6 +105,7 @@
     recordTarget: byId('record-target'),
     captureTarget: byId('capture-target'),
     linkTarget: byId('link-target'),
+    suggestReportDraft: byId('suggest-report-draft'),
     purposeStart: byId('purpose-start'),
     purposeOptions: byId('purpose-options'),
     stopRecordingBar: byId('stop-recording-bar'),
@@ -215,8 +216,8 @@
   let mappingLinksFrame = null;
   // 좁은 폭(사이드 패널)에서 작업대에 보여 줄 목록: 'inbox' | 'features'.
   let narrowPane = 'inbox';
-  // 연결 버튼을 눌렀지만 테스트케이스를 고르지 않은 경우, 다음에 누르는 테스트케이스에 연결할 증적.
-  let pendingMapEvidenceIds = null;
+  // 고른 사진들(여러 장을 한 번에 연결·삭제).
+  const selectedEvidenceIds = new Set();
   // 이 페이지가 탭으로 열렸는지(넓게 보기) 사이드 패널로 열렸는지. 탭이면 탭 정보, 패널이면 null.
   let hostTab = null;
   let sessionButtonState = 'INACTIVE';
@@ -532,14 +533,6 @@
   // 드로어는 featureDrawerToggleButton()의 명시적 클릭으로만 연다(요청: "오버레이로 바로 진입하지
   // 않고, 오버레이 진입 버튼을 단다"). 같은 카드를 다시 클릭하면 선택을 해제한다(토글).
   function selectFeature(featureId) {
-    if (pendingMapEvidenceIds) {
-      const feature = editorState.features.find((item) => item.id === featureId);
-      const evidenceIds = pendingMapEvidenceIds;
-      setPendingMapping(null);
-      currentFeatureId = featureId;
-      if (feature) mapEvidenceIdsWithConfirm(evidenceIds, feature).catch((error) => setMessage(error.message, true));
-      return;
-    }
     currentFeatureId = currentFeatureId === featureId ? null : featureId;
     renderFeatures();
     renderFeature();
@@ -803,7 +796,7 @@
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = `증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요. 이 ${itemWord('이/가')} 골라져 있으면 바로 연결됩니다.`;
+      elements.featureMappingGuidance.textContent = `증적 수집함에서 세트의 "연결 ▾"나 고른 사진의 "연결 ▾"를 누르고 이 ${itemWord('을/를')} 고르세요.`;
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -999,32 +992,122 @@
     return wrap;
   }
 
-  function mapToFeatureButton(evidenceIds) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    // 끌어다 놓기가 막힌 환경에서 연결은 이 버튼뿐이라, 아이콘만 두지 않고 "연결" 글자를 붙여 크게 둔다.
-    button.className = 'button button-quiet map-to-feature-button';
-    button.setAttribute('aria-label', `${itemWord()}에 연결`);
-    button.replaceChildren(iconSvg('link'), '연결');
-    button.title = currentFeature()
-      ? `'${currentFeature().title}'에 연결합니다`
-      : editorState.features.length > 1 ? `누른 뒤 연결할 ${itemWord('을/를')} 고릅니다` : `${itemWord()}에 연결합니다`;
-    button.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      try {
-        // 고른 테스트케이스가 없고 여러 개 있으면, 다음에 누르는 테스트케이스에 연결한다.
-        if (!currentFeature() && editorState.features.length > 1) {
-          setPendingMapping(evidenceIds);
-          return;
+  // ── 연결: 어디에 붙일지 늘 직접 고른다 ─────────────────────────────
+  // 예전에는 "연결"이 지금 골라 둔(또는 하나뿐인) 테스트케이스에 말없이 붙어, 누를 때마다 같은 곳으로 갔다.
+  // 이제 "연결 ▾"를 누르면 목록이 열린다: 기존 항목들 / 새로 만들어 연결 / (세트면) 화면별로 나눠 만들기.
+  // evidenceIds: 연결할 증적들. options.group: 세트에서 열었으면 그 세트(화면별 나누기를 보여 준다).
+  function linkTargetMenu(evidenceIds, options = {}) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mini-menu-wrap link-menu-wrap';
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'button button-quiet map-to-feature-button';
+    trigger.setAttribute('aria-haspopup', 'true');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', `${itemWord()}에 연결`);
+    trigger.title = `어느 ${itemWord()}에 연결할지 고릅니다`;
+    trigger.replaceChildren(iconSvg('link'), options.label || '연결', Object.assign(document.createElement('span'), { className: 'caret', textContent: '▾' }));
+    const menu = document.createElement('div');
+    menu.className = 'mini-menu link-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    const close = () => {
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const onOutside = (event) => { if (!wrap.contains(event.target)) close(); };
+    const entry = (label, run, extra = '') => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `more-menu-item ${extra}`.trim();
+      button.setAttribute('role', 'menuitem');
+      if (Array.isArray(label)) button.append(...label); else button.textContent = label;
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        close();
+        Promise.resolve(run()).catch((error) => setMessage(error.message, true));
+      });
+      return button;
+    };
+    const build = () => {
+      const ids = typeof evidenceIds === 'function' ? evidenceIds() : evidenceIds;
+      const items = [];
+      items.push(Object.assign(document.createElement('p'), { className: 'link-menu-title', textContent: `증적 ${ids.length}장을 어디에 연결할까요?` }));
+      editorState.features.forEach((feature, index) => {
+        const already = ids.every((id) => (editorState.evidence.find((item) => item.id === id) || {}).featureSpecId === feature.id);
+        const label = [`${index + 1}. ${feature.title || untitledItem()}`];
+        if (already) label.push(Object.assign(document.createElement('span'), { className: 'link-menu-note', textContent: ' ✓ 연결됨' }));
+        items.push(entry(label, () => mapEvidenceIdsWithConfirm(ids, feature), feature.id === currentFeatureId ? 'is-current' : ''));
+      });
+      items.push(entry(`＋ 새 ${itemWord()}로 만들어 연결`, () => linkToNewFeature(ids), 'link-menu-new'));
+      if (options.group) {
+        const parts = splitPartsFor(ids);
+        if (parts.length > 1) {
+          items.push(entry([`화면별로 나눠 ${parts.length}개 ${itemWord()} 만들기`, Object.assign(document.createElement('span'), { className: 'link-menu-note', textContent: ` (${parts.map((part) => part.title).slice(0, 2).join(', ')}${parts.length > 2 ? ' …' : ''})` })], () => splitIntoFeatures(ids), 'link-menu-split'));
         }
-        const feature = await featureForMapping();
-        if (!feature) return;
-        await mapEvidenceIdsWithConfirm(evidenceIds, feature);
-      } catch (error) {
-        setMessage(error.message, true);
       }
+      menu.replaceChildren(...items);
+    };
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!menu.hidden) return close();
+      build();
+      menu.hidden = false;
+      // 오른쪽 끝에 맞춰 열되, 화면 왼쪽 밖으로 나가면 왼쪽에 맞춘다(선택 막대처럼 왼쪽에 있는 버튼).
+      menu.classList.remove('align-left');
+      if (menu.getBoundingClientRect().left < 4) menu.classList.add('align-left');
+      trigger.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', onOutside, true);
+      const first = menu.querySelector('button');
+      if (first) first.focus({ preventScroll: true });
+      return undefined;
     });
-    return button;
+    menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { close(); trigger.focus(); } });
+    wrap.append(trigger, menu);
+    return wrap;
+  }
+
+  function splitPartsFor(evidenceIds) {
+    const items = evidenceIds.map((id) => editorState.evidence.find((item) => item.id === id)).filter(Boolean);
+    return CaptureITEvidenceSplit.splitByScreen(items);
+  }
+
+  // 새 항목을 만들어 연결한다. 이름은 첫 화면의 제목으로 지어 둔다(나중에 바꾸면 된다).
+  async function linkToNewFeature(evidenceIds) {
+    const parts = splitPartsFor(evidenceIds);
+    const title = parts.length ? parts[0].title : `새 ${itemWord()}`;
+    const feature = CaptureITDomain.addFeature(editorState, title);
+    currentFeatureId = feature.id;
+    await mapEvidenceIds(evidenceIds, feature);
+    setNarrowPane('features');
+    setMessage(`'${feature.title}'${CaptureITDocumentTypes.josa(feature.title, '을/를').slice(feature.title.length)} 만들어 증적 ${evidenceIds.length}장을 연결했습니다. 이름은 바꿔도 됩니다.`);
+  }
+
+  // 녹화 세트를 화면마다 나눠 항목을 하나씩 만들고 연결한다. 이미 다른 곳에 연결된 증적은 그대로 둔다.
+  // AI 자동 작성은 한꺼번에 돌리지 않는다(분당 한도). 필요한 항목에서 AI 버튼을 누르면 된다.
+  async function splitIntoFeatures(evidenceIds) {
+    const free = evidenceIds.filter((id) => !(editorState.evidence.find((item) => item.id === id) || {}).featureSpecId);
+    const parts = splitPartsFor(free.length ? free : evidenceIds);
+    if (free.length === 0) {
+      setMessage('이 세트의 증적은 모두 이미 연결돼 있습니다. 먼저 ⋯ → 세트 연결 해제를 하세요.', true);
+      return;
+    }
+    let firstId = null;
+    for (const part of parts) {
+      const feature = CaptureITDomain.addFeature(editorState, part.title);
+      firstId = firstId || feature.id;
+      CaptureITDomain.mapEvidenceBatch(editorState, part.evidenceIds, feature.id);
+    }
+    await persistMappedEvidence(free);
+    currentFeatureId = firstId;
+    await saveReport();
+    renderEvidence();
+    renderFeatures();
+    renderFeature();
+    renderWorkspace();
+    setNarrowPane('features');
+    setMessage(`화면별로 나눠 ${itemWord()} ${parts.length}개를 만들고 연결했습니다. 이름을 다듬고 판정하세요.`);
   }
 
   // Quick_Mapping_Dialog: Capture_Graph/Capture_Node를 더블클릭하면 대상 evidenceIds를 기억해 두고
@@ -1167,8 +1250,18 @@
     }
     const nodeFooter = document.createElement('div');
     nodeFooter.className = 'capture-node-footer';
+    // 사진 한 장씩 연결하는 버튼 대신 고르기 상자를 둔다. 여러 장을 골라 위의 "선택한 N장 → 연결 ▾"로 한 번에 붙인다.
+    const pick = document.createElement('label');
+    pick.className = 'node-pick';
+    pick.title = '골라서 여러 장을 한 번에 연결·삭제';
+    const pickInput = Object.assign(document.createElement('input'), { type: 'checkbox', checked: selectedEvidenceIds.has(evidence.id) });
+    pickInput.setAttribute('aria-label', `${evidenceStepLabel(evidence)} 고르기`);
+    pickInput.addEventListener('click', (event) => event.stopPropagation());
+    pickInput.addEventListener('change', () => toggleEvidenceSelection(evidence.id, pickInput.checked));
+    pick.append(pickInput, '고르기');
+    node.classList.toggle('picked', selectedEvidenceIds.has(evidence.id));
     nodeFooter.append(
-      mapToFeatureButton([evidence.id]),
+      pick,
       iconButton('증적 삭제', 'trash', () => removeEvidence(evidence.id), false, 'danger'),
     );
     node.append(nodeFooter);
@@ -1213,7 +1306,7 @@
     headerActions.className = 'capture-graph-header-actions';
     // 자주 쓰는 "연결"만 밖에 두고, 가끔 쓰는 것(AI 제목, 연결 해제, 삭제)은 ⋯ 메뉴에 넣어 고를 것을 줄인다.
     headerActions.append(
-      mapToFeatureButton(group.evidenceIds),
+      linkTargetMenu(group.evidenceIds, { group }),
       overflowMenu('세트 메뉴', [
         { label: 'AI로 제목 짓기', run: () => requestEvidenceGroupTitleSuggestion(group).catch((error) => setMessage(`제목 추천 실패: ${error.message}`, true)) },
         { label: '세트 연결 해제', run: () => unmapEvidenceGroup(group.evidenceIds), disabled: mappedFeatureIds.length === 0 },
@@ -1397,18 +1490,34 @@
     elements.recentEvidence.replaceChildren(button);
   }
 
-  // 끌어다 놓기가 막힌 환경에서는 연결 버튼이 유일한 연결 방법이다. 누르면 어디로 연결되는지 미리 알려 준다.
+  // 연결 방법 안내 한 줄, 그리고 사진을 골랐으면 "선택한 N장 → 연결 ▾ / 삭제 / 해제" 막대.
   function renderLinkTarget() {
-    const feature = currentFeature();
+    const existing = new Set(editorState.evidence.map((item) => item.id));
+    for (const id of [...selectedEvidenceIds]) if (!existing.has(id)) selectedEvidenceIds.delete(id);
     elements.linkTarget.hidden = editorState.evidence.length === 0;
-    if (feature) {
-      const index = editorState.features.indexOf(feature) + 1;
-      elements.linkTarget.replaceChildren('연결 버튼을 누르면 → ', Object.assign(document.createElement('strong'), { textContent: `${index}. ${feature.title || untitledItem()}` }));
-    } else {
-      elements.linkTarget.textContent = editorState.features.length === 0
-        ? `연결 버튼을 누르면 ${itemWord('을/를')} 새로 만들어 연결합니다.`
-        : `연결 버튼을 누른 뒤 연결할 ${itemWord('을/를')} 고르세요.`;
+    if (selectedEvidenceIds.size === 0) {
+      elements.linkTarget.classList.remove('selection-bar');
+      elements.linkTarget.textContent = `세트의 "연결 ▾"에서 어디에 붙일지 고릅니다. 여러 ${itemWord()}에 걸친 녹화는 "화면별로 나눠 만들기", 몇 장만 따로 붙이려면 사진의 "고르기"를 체크하세요.`;
+      return;
     }
+    elements.linkTarget.classList.add('selection-bar');
+    const clear = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button', textContent: '선택 해제' });
+    clear.addEventListener('click', () => { selectedEvidenceIds.clear(); renderEvidence(); });
+    const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button danger-text', textContent: '삭제' });
+    remove.addEventListener('click', () => removeEvidenceGroup([...selectedEvidenceIds]).then(() => { selectedEvidenceIds.clear(); renderEvidence(); }).catch((error) => setMessage(error.message, true)));
+    elements.linkTarget.replaceChildren(
+      Object.assign(document.createElement('strong'), { textContent: `선택한 ${selectedEvidenceIds.size}장` }),
+      linkTargetMenu(() => [...selectedEvidenceIds], { label: '연결' }),
+      remove,
+      clear,
+    );
+  }
+
+  function toggleEvidenceSelection(evidenceId, picked) {
+    if (picked) selectedEvidenceIds.add(evidenceId); else selectedEvidenceIds.delete(evidenceId);
+    const node = elements.evidenceInbox.querySelector(`.capture-node[data-evidence-id="${evidenceId}"]`);
+    if (node) node.classList.toggle('picked', picked);
+    renderLinkTarget();
   }
 
   function renderEvidence() {
@@ -1705,8 +1814,8 @@
     const recording = Boolean(session && session.active);
     if (recording) messages.push(docType().capture.recording);
     else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
-    else if (featureCount === 0) messages.push(`증적 세트의 연결 버튼을 누르면 ${itemWord('이/가')} 만들어지며 연결됩니다.`);
-    else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. ${itemWord('을/를')} 고른 뒤 증적의 연결 버튼을 누르세요.`);
+    else if (featureCount === 0) messages.push(`증적 세트의 "연결 ▾"에서 ${itemWord('을/를')} 새로 만들어 연결하세요. 여러 화면에 걸친 녹화는 "화면별로 나눠 만들기"를 고르세요.`);
+    else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. 증적 세트의 "연결 ▾"나 사진을 골라 연결하세요.`);
     else if (unjudged > 0) messages.push(`${verdict.none} 상태인 ${itemWord('이/가')} ${unjudged}개 있습니다.`);
     else messages.push(verdict ? `모두 ${verdict.label}했습니다. 내보내기를 누르세요.` : '내보내기를 누르세요.');
     if (elements.reportDraftSuggestionDialog.open) {
@@ -1782,15 +1891,6 @@
     renderCompletionSummary();
     renderCaptureTarget();
     scheduleMappingLinks();
-  }
-
-  function setPendingMapping(evidenceIds) {
-    pendingMapEvidenceIds = evidenceIds && evidenceIds.length ? evidenceIds : null;
-    elements.featureList.classList.toggle('picking', Boolean(pendingMapEvidenceIds));
-    if (pendingMapEvidenceIds) {
-      setNarrowPane('features');
-      setMessage(`증적 ${pendingMapEvidenceIds.length}장을 연결할 ${itemWord('을/를')} 누르세요. 취소하려면 Esc.`);
-    }
   }
 
   function openExportDialog() {
@@ -2181,7 +2281,6 @@
       setMessage(`${itemWord('이/가')} 없어서 새로 만들어 연결했습니다. 이름을 바꿔 주세요.`);
       return currentFeature();
     }
-    setPendingMapping(null);
     setMessage(`연결할 ${itemWord('을/를')} 먼저 고르세요.`, true);
     setNarrowPane('features');
     return null;
@@ -2212,6 +2311,9 @@
       return;
     }
     await mapEvidenceIds(targetIds, feature);
+    for (const id of targetIds) selectedEvidenceIds.delete(id);
+    renderLinkTarget();
+    renderEvidence();
     setMessage(`'${feature.title}'에 사진 ${targetIds.length}장을 연결했습니다.`);
   }
 
@@ -3466,26 +3568,24 @@
   // 미리보기/ZIP 생성 트리거 시 매핑된 Evidence가 있으면 LLM에 보고서 초안(제목/형상·체크아웃 개요)을
   // 요청하고, 성공하면 검토용 다이얼로그에 표시한다(요구사항 10.1, 10.2). 실패 시 조용히 무시하고
   // 미리보기/ZIP 생성 자체를 막지 않는다(요구사항 10.6).
-  async function requestReportDraftSuggestion() {
-    if (!llmReady) return;
+  // 보고서 제목·형상 개요 AI 초안. 사용자가 버튼을 눌렀을 때만 요청하고, 답이 오면 확인 창에서 반영 여부를 고른다.
+  async function requestReportDraftSuggestion(options = {}) {
+    const onStatus = options.onStatus || (() => {});
+    if (!llmReady) throw new Error('AI 연결이 확인되지 않았습니다. ⋮ → AI 설정에서 연결 테스트를 먼저 하세요.');
     const mappedEvidenceByFeature = mappedEvidenceByFeatureForDraft();
-    if (mappedEvidenceByFeature.length === 0) return;
-    try {
-      for (const { evidence } of mappedEvidenceByFeature) {
-        for (const item of evidence) await ensureThumbnail(item);
-      }
-      const payload = CaptureITLlm.buildReportDraftRequest(report, mappedEvidenceByFeature);
-      const rawResponse = await postLlm(payload);
-      const suggestion = CaptureITLlm.validateReportDraftSuggestion(rawResponse);
-      elements.draftSuggestionTitle.value = suggestion.title;
-      elements.draftSuggestionOverview.value = suggestion.configurationOverview;
-      // previewReport()가 매 클릭마다 이 함수를 호출하므로, 이전 제안 다이얼로그가 아직 열려
-      // 있는 상태에서 다시 showModal()을 호출하면 InvalidStateError가 던져질 수 있다.
-      if (!elements.reportDraftSuggestionDialog.open) elements.reportDraftSuggestionDialog.showModal();
-      renderGuidance();
-    } catch {
-      // 비차단(요구사항 10.6): LLM 초안 제안 실패는 미리보기/ZIP 생성 흐름에 영향을 주지 않는다.
+    if (mappedEvidenceByFeature.length === 0) throw new Error(`증적이 연결된 ${itemWord('이/가')} 없어 초안을 만들 수 없습니다.`);
+    for (const { evidence } of mappedEvidenceByFeature) {
+      for (const item of evidence) await ensureThumbnail(item);
     }
+    onStatus('AI 응답 기다리는 중');
+    const payload = CaptureITLlm.buildReportDraftRequest(report, mappedEvidenceByFeature);
+    const rawResponse = await postLlm(payload, { onStatus });
+    const suggestion = CaptureITLlm.validateReportDraftSuggestion(rawResponse);
+    elements.draftSuggestionTitle.value = suggestion.title;
+    elements.draftSuggestionOverview.value = suggestion.configurationOverview;
+    if (!elements.reportDraftSuggestionDialog.open) elements.reportDraftSuggestionDialog.showModal();
+    setMessage('AI 초안이 왔습니다. 고쳐서 반영하거나 무시하세요.');
+    renderGuidance();
   }
 
   // Report_Draft_Suggestion 승인/수정-후-승인 핸들러. 다이얼로그의 input/textarea 값을 그대로 읽어
@@ -3723,7 +3823,8 @@
     }
     if (lastPreviewObjectUrl) URL.revokeObjectURL(lastPreviewObjectUrl);
     lastPreviewObjectUrl = url;
-    requestReportDraftSuggestion().catch(() => {});
+    // 미리보기 때 AI 보고서 초안을 몰래 요청하지 않는다. 예전에는 미리보기마다 요청해 답이 올 때마다(대기 줄 때문에
+    // 한참 뒤에도) "AI 보고서 초안" 창이 불쑥 떴다. 초안은 보고서 정보의 "AI로 제목·개요 초안" 버튼으로만 받는다.
   }
 
   // 보고서 정보(문서 머리말·변경 개요)는 내보내기 창 안에서 적는 대로 저장한다. 모두 선택 입력이다.
@@ -3876,12 +3977,6 @@
   elements.cleanDuplicates.addEventListener('click', () => cleanDuplicateEvidence().catch((error) => setMessage(`중복 화면 정리 실패: ${error.message}`, true)));
   elements.evidenceSearch.addEventListener('input', renderEvidence);
   window.addEventListener('resize', scheduleMappingLinks);
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && pendingMapEvidenceIds) {
-      setPendingMapping(null);
-      setMessage('연결을 취소했습니다.');
-    }
-  });
   elements.openViewer.addEventListener('click', openViewerPage);
   elements.exportReport.addEventListener('click', () => withBusy(elements.exportReport, 'ZIP 만드는 중…', exportReport).catch((error) => setMessage(`보고서 생성 실패: ${error.message}`, true)));
   elements.exportEvidenceOnly.addEventListener('click', () => withBusy(elements.exportEvidenceOnly, 'ZIP 만드는 중…', exportEvidenceOnly).catch((error) => setMessage(`증적 ZIP 생성 실패: ${error.message}`, true)));
@@ -3927,6 +4022,7 @@
   });
   elements.closeLlmSettings.addEventListener('click', () => elements.llmSettingsDialog.close());
   elements.openReportInfo.addEventListener('click', openReportInfo);
+  elements.suggestReportDraft.addEventListener('click', () => withBusy(elements.suggestReportDraft, 'AI가 쓰는 중…', () => requestReportDraftSuggestion({ onStatus: (text) => setMessage(`보고서 초안 · ${text}`) })).catch((error) => setMessage(`보고서 초안 실패: ${error.message}`, true)));
   elements.dismissDraftSuggestion.addEventListener('click', () => {
     elements.reportDraftSuggestionDialog.close();
     renderGuidance();

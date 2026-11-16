@@ -143,6 +143,9 @@
           <label class="wide">수정 내용 요약<textarea id="change-summary" rows="2"></textarea></label>
           <label class="wide">형상·체크아웃 개요<textarea id="configuration-overview" rows="2"></textarea></label>
         </div>
+        <div class="report-info-actions">
+          <button id="suggest-report-draft" class="button button-quiet" type="button" title="연결된 증적을 보고 보고서 제목과 형상·체크아웃 개요 초안을 받습니다. 반영할지는 직접 고릅니다.">AI로 제목·개요 초안</button>
+        </div>
       </details>
       <fieldset class="template-picker">
         <legend>문서 양식</legend>
@@ -296,6 +299,7 @@
   <script src="shared/screenshot-cropper.js"></script>
   <script src="shared/evidence-step-builder.js"></script>
   <script src="shared/evidence-dedupe.js"></script>
+  <script src="shared/evidence-split.js"></script>
   <script src="shared/pointer-marker.js"></script>
   <script src="shared/llm.js"></script>
   <script src="shared/ai-budget.js"></script>

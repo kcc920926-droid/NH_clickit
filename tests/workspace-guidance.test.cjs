@@ -70,7 +70,7 @@ test('Requirement 1.6 - 매핑되지 않은 Test_Result_Set을 가진 검증 항
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*`증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요\. 이 \$\{itemWord\('이\/가'\)\} 골라져 있으면 바로 연결됩니다\.`/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*`증적 수집함에서 세트의 "연결 ▾"나 고른 사진의 "연결 ▾"를 누르고 이 \$\{itemWord\('을\/를'\)\} 고르세요\.`/,
     '매핑된 증적(Test_Result_Set)이 없으면 매핑 유도 문구를 textContent에 설정해야 한다(Requirement 1.6)',
   );
 
@@ -93,7 +93,7 @@ test('Requirement 3.5 - 첫 매핑 전/후로 featureMappingGuidance 문구가 �
   // 매핑 전(evidenceIds.length === 0) 분기
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*`증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요\. 이 \$\{itemWord\('이\/가'\)\} 골라져 있으면 바로 연결됩니다\.`/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*`증적 수집함에서 세트의 "연결 ▾"나 고른 사진의 "연결 ▾"를 누르고 이 \$\{itemWord\('을\/를'\)\} 고르세요\.`/,
     '매핑 전에는 매핑 유도 문구를 설정해야 한다',
   );
   // 매핑 후(evidenceIds.length > 0, 즉 첫 매핑 직후) 분기

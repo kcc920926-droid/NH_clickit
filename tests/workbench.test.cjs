@@ -55,13 +55,23 @@ test('수집 대상으로 정한 테스트케이스에 새 증적(녹화·붙여
   assert.match(functionBody(editor, 'setCaptureTarget'), /report\.captureTargetFeatureId = featureId \|\| null;/);
 });
 
-test('테스트케이스를 고르지 않고 연결을 누르면, 다음에 누르는 테스트케이스에 연결한다(Esc로 취소)', () => {
-  const button = functionBody(editor, 'mapToFeatureButton');
-  assert.match(button, /if \(!currentFeature\(\) && editorState\.features\.length > 1\) \{\s*setPendingMapping\(evidenceIds\);/);
-  const select = functionBody(editor, 'selectFeature');
-  assert.match(select, /if \(pendingMapEvidenceIds\) \{/);
-  assert.match(select, /mapEvidenceIdsWithConfirm\(evidenceIds, feature\)/);
-  assert.match(editor, /event\.key === 'Escape' && pendingMapEvidenceIds/);
+test('연결은 늘 어디에 붙일지 고른다: 기존 항목 / 새로 만들어 연결 / (세트면) 화면별로 나눠 만들기', () => {
+  const menu = functionBody(editor, 'linkTargetMenu');
+  assert.match(menu, /editorState\.features\.forEach\(\(feature, index\) => \{/, '모든 항목을 보여 준다');
+  assert.match(menu, /entry\(`＋ 새 \$\{itemWord\(\)\}로 만들어 연결`, \(\) => linkToNewFeature\(ids\)/);
+  assert.match(menu, /if \(parts\.length > 1\) \{/);
+  assert.match(menu, /\(\) => splitIntoFeatures\(ids\)/);
+  assert.doesNotMatch(editor, /pendingMapEvidenceIds|setPendingMapping|function mapToFeatureButton/, '말없이 지금 고른 항목에 붙던 방식은 없앤다');
+  const split = functionBody(editor, 'splitIntoFeatures');
+  assert.match(split, /const free = evidenceIds\.filter/, '이미 연결된 증적은 그대로 둔다');
+  assert.doesNotMatch(split, /autoRunAiPipelineForFeature/, '나눠 만들 때 AI를 한꺼번에 돌리지 않는다(분당 한도)');
+});
+
+test('사진은 "고르기"로 여러 장 골라 "선택한 N장 → 연결 ▾"로 한 번에 붙인다', () => {
+  const bar = functionBody(editor, 'renderLinkTarget');
+  assert.match(bar, /`선택한 \$\{selectedEvidenceIds\.size\}장`/);
+  assert.match(bar, /linkTargetMenu\(\(\) => \[\.\.\.selectedEvidenceIds\], \{ label: '연결' \}\)/);
+  assert.match(functionBody(editor, 'mapEvidenceIdsWithConfirm'), /for \(const id of targetIds\) selectedEvidenceIds\.delete\(id\);/, '연결한 사진은 선택에서 뺀다');
 });
 
 test('검증 내용 등 항목의 칸은 카드에서 입력한다(보고서 표에 들어가는데 입력란이 없어 경고만 떴다)', () => {
@@ -97,8 +107,7 @@ test('화면 안내는 끌어다 놓기 대신 붙여넣기·이미지 불러오
   for (const text of userText) assert.doesNotMatch(text, /끌어다|드래그/, text);
   assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), /끌어다|드래그/);
   const body = functionBody(editor, 'renderLinkTarget');
-  assert.match(body, /'연결 버튼을 누르면 → '/);
-  assert.match(body, /`연결 버튼을 누른 뒤 연결할 \$\{itemWord\('을\/를'\)\} 고르세요\.`/);
+  assert.match(body, /세트의 "연결 ▾"에서 어디에 붙일지 고릅니다/);
 });
 
 test('방금 찍힌 화면의 긴 설명이 수집 줄을 넓혀 녹화 종료 버튼을 화면 밖으로 밀지 않는다(3.1.0 버그)', () => {
