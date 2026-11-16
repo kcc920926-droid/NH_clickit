@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CaptureIT 보고서 양식 비교</title>
+<style>
+:root { --ink: #1b1b1b; --muted: #6a6862; --hair: #dcd8cf; --serif: "Noto Serif KR", "Nanum Myeongjo", "AppleMyungjo", "Batang", Georgia, serif; --sans: Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #efede8; color: var(--ink); font: 14px/1.6 var(--sans); }
+header { max-width: 1100px; margin: 0 auto; padding: 32px 24px 0; }
+header h1 { margin: 0 0 4px; font: 700 26px/1.3 var(--serif); }
+header p { margin: 0; color: var(--muted); }
+nav { display: flex; flex-wrap: wrap; gap: 4px 24px; max-width: 1100px; margin: 18px auto 0; padding: 10px 24px; border-top: 2px solid var(--ink); }
+nav button { padding: 2px 0; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: 600 14px var(--sans); cursor: pointer; }
+nav button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+#desc { max-width: 1100px; margin: 0 auto; padding: 0 24px; color: var(--muted); }
+iframe { display: block; width: min(1100px, calc(100% - 32px)); height: 1500px; margin: 16px auto 48px; border: 1px solid var(--hair); background: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>보고서 양식 비교</h1>
+  <p>확장의 실제 보고서 생성기(extension/shared/report.js)로 같은 데모 데이터를 양식별로 그립니다. 이미지는 자리 표시용입니다.</p>
+</header>
+<nav id="tabs"></nav>
+<p id="desc"></p>
+<iframe id="frame" title="보고서 미리보기"></iframe>
+<script src="../../extension/shared/report.js"></script>
+<script>
+  // 자리 표시 화면: 가는 머리띠와 강조 상자가 있는 회색 화면
+  function screen(label, marked) {
+    const box = marked ? '<rect x="560" y="300" width="420" height="120" fill="rgba(250,204,21,.28)" stroke="#d92d20" stroke-width="5"/>' : '';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#f6f4ef"/><rect width="1280" height="96" fill="#e4e1d9"/><text x="48" y="60" font-family="sans-serif" font-size="34" fill="#6a6862">${label}</text><rect x="48" y="150" width="1184" height="18" fill="#e4e1d9"/><rect x="48" y="200" width="900" height="18" fill="#e4e1d9"/><rect x="48" y="250" width="1000" height="18" fill="#e4e1d9"/>${box}</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+
+  const shots = [
+    ['E1', 'baseline', '주문 승인 목록', '승인 대기 2건', false],
+    ['E2', 'manual-pin', '주문 승인 목록', 'ORD-1002 승인 버튼', true],
+    ['E3', 'route-change', 'ORD-1002 상세', "상태 '승인 완료'", false],
+    ['E4', 'click', '주문 승인 목록', '승인 두 번 클릭', true],
+  ];
+  const evidence = shots.map(([id, triggerType, pageTitle, description], index) => ({
+    id, sessionId: 'S1', sequenceNo: index + 1, triggerType, capturedAt: '2026-11-16T01:00:00.000Z', source: 'web-capture', description,
+    context: { pageTitle, pageUrl: 'http://orderops.local/orders' }, imageDataUrl: 'data:image/png;base64,AAAA',
+  }));
+  const report = {
+    id: 'DEMO', title: '주문 승인 기능 QA 결과', projectName: 'OrderOps 주문 관리', author: '개발 담당',
+    changePurpose: '승인 버튼을 두 번 누르면 승인 이력이 두 번 쌓이는 문제 수정',
+    changeSummary: '승인 요청 중 버튼 비활성화, 상세 화면에 승인 이력 표시',
+    configurationOverview: '', createdAt: '2026-11-16T01:00:00.000Z', updatedAt: '2026-11-16T02:00:00.000Z',
+    features: [
+      { id: 'F1', title: '승인 대기 주문 승인', description: '승인 권한 사용자가 승인 대기 주문을 승인한다.',
+        result: { id: 'F1-R', verification: '목록에서 승인 후 상세 상태 확인', expectedResult: "상태가 '승인 완료'로 바뀌고 이력 1건", actualResult: '기대와 같음', status: 'PASS', evidenceIds: ['E1', 'E2', 'E3'] } },
+      { id: 'F2', title: '승인 버튼 중복 클릭 방지', description: '',
+        result: { id: 'F2-R', verification: '[승인]을 빠르게 두 번 클릭', expectedResult: '요청이 한 번만 처리된다', actualResult: '이력 2건 생성', status: 'FAIL', evidenceIds: ['E4'] } },
+      { id: 'F3', title: '권한 없는 사용자 승인 차단', description: '',
+        result: { id: 'F3-R', verification: '', expectedResult: '승인 버튼이 보이지 않는다', actualResult: '', status: null, evidenceIds: [] } },
+    ],
+  };
+  const manifest = CaptureITReport.buildManifest(report, evidence);
+  const imageByFile = new Map();
+  for (const feature of manifest.features) {
+    for (const item of feature.result.evidence) {
+      const shot = shots.find(([id]) => id === item.captureId);
+      imageByFile.set(item.file, screen(shot[2], shot[4]));
+    }
+  }
+
+  const tabs = document.getElementById('tabs');
+  const frame = document.getElementById('frame');
+  const desc = document.getElementById('desc');
+  function show(templateId) {
+    let html = CaptureITReport.renderHtml(manifest, { template: templateId });
+    for (const [file, url] of imageByFile) html = html.split(`src="${file}"`).join(`src="${url}"`);
+    frame.srcdoc = html;
+    const template = CaptureITReport.REPORT_TEMPLATES.find((item) => item.id === templateId);
+    desc.textContent = template.description;
+    for (const button of tabs.children) button.setAttribute('aria-pressed', String(button.dataset.id === templateId));
+  }
+  for (const template of CaptureITReport.REPORT_TEMPLATES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.id = template.id;
+    button.textContent = template.id === CaptureITReport.DEFAULT_TEMPLATE ? `${template.name} (기본)` : template.name;
+    button.addEventListener('click', () => show(template.id));
+    tabs.append(button);
+  }
+  show(CaptureITReport.DEFAULT_TEMPLATE);
+</script>
+</body>
+</html>

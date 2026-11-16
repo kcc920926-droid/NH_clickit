@@ -119,6 +119,7 @@
     pasteZone: byId('paste-zone'),
     pasteZoneTitle: byId('paste-zone-title'),
     pasteZoneHint: byId('paste-zone-hint'),
+    templateOptions: byId('template-options'),
   };
 
   // Node_Context_Preview: capture-node 하나를 hover할 때 보여주는 공유 툴팁 엘리먼트.
@@ -209,6 +210,9 @@
   let importSession = null;
   let importSessionLastAt = 0;
   const IMPORT_SESSION_GAP_MS = 10 * 60 * 1000;
+  // 문서 양식(지면 모양). 보고서마다 report.documentTemplate에 저장하고, 새 보고서는 마지막에 고른 양식을 따른다.
+  // report.js의 buildManifest가 고르는 필드가 아니므로 manifest.json에는 들어가지 않는다.
+  let preferredTemplate = null;
 
   const roleLabel = { before: '수행 전', action: '수행 시점', after: '수행 후' };
   // 캡처 모드 선택 UI는 기본 화면에서 제거됐으나(iOS 원칙 1, 2), 내부적으로는 항상 'event' 모드로
@@ -1311,6 +1315,57 @@
     return { features: features.length, pass, fail, na, evidence: mappedEvidenceIds.size, aiImages };
   }
 
+  function currentTemplateId() {
+    return report && report.documentTemplate || preferredTemplate || CaptureITReport.DEFAULT_TEMPLATE;
+  }
+
+  // 완료 단계의 양식 선택. 양식마다 축소 지면(.tpl-thumb)을 그려 모양을 미리 보여준다.
+  function renderTemplatePicker() {
+    if (!elements.templateOptions) return;
+    const selected = currentTemplateId();
+    const options = CaptureITReport.REPORT_TEMPLATES.map((template) => {
+      const option = document.createElement('label');
+      option.className = 'template-option';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'report-template';
+      input.value = template.id;
+      input.checked = template.id === selected;
+      input.addEventListener('change', () => {
+        if (input.checked) setReportTemplate(template.id).catch((error) => setMessage(error.message, true));
+      });
+      const thumb = document.createElement('span');
+      thumb.className = `tpl-thumb tpl-thumb-${template.id}`;
+      thumb.setAttribute('aria-hidden', 'true');
+      for (const part of ['title', 'rule', 'line', 'line', 'figure', 'line']) {
+        const piece = document.createElement('i');
+        piece.className = `tpl-${part}`;
+        thumb.append(piece);
+      }
+      const name = document.createElement('span');
+      name.className = 'template-option-name';
+      name.textContent = template.id === CaptureITReport.DEFAULT_TEMPLATE ? `${template.name} (기본)` : template.name;
+      const description = document.createElement('span');
+      description.className = 'template-option-description';
+      description.textContent = template.description;
+      option.append(input, thumb, name, description);
+      return option;
+    });
+    elements.templateOptions.replaceChildren(...options);
+  }
+
+  async function setReportTemplate(templateId) {
+    preferredTemplate = templateId;
+    await extensionStorage.set({ preferredReportTemplate: templateId });
+    if (report) {
+      report.documentTemplate = templateId;
+      queueSave();
+    }
+    renderTemplatePicker();
+    const template = CaptureITReport.REPORT_TEMPLATES.find((item) => item.id === templateId);
+    setMessage(`문서 양식을 '${template ? template.name : templateId}'(으)로 바꿨습니다.`);
+  }
+
   function renderCompletionSummary() {
     const summary = computeCompletionSummary();
     elements.completionSummaryFeatures.textContent = String(summary.features);
@@ -1447,6 +1502,7 @@
 
     applyActionPlan(snapshot);
     renderCompletionSummary();
+    renderTemplatePicker();
     scheduleMappingLinks();
   }
 
@@ -2687,7 +2743,7 @@
   function buildExportEntries() {
     const manifest = CaptureITReport.buildManifest(report, editorState.evidence);
     const entries = [
-      { name: 'report.html', data: CaptureITReport.renderHtml(manifest) },
+      { name: 'report.html', data: CaptureITReport.renderHtml(manifest, { template: currentTemplateId() }) },
       { name: 'report.md', data: CaptureITReport.renderMarkdown(manifest) },
       { name: 'manifest.json', data: `${JSON.stringify(manifest, null, 2)}\n` },
     ];
@@ -2804,7 +2860,7 @@
   async function previewReport() {
     await saveReport();
     const manifest = CaptureITReport.buildManifest(report, editorState.evidence);
-    const parsed = new DOMParser().parseFromString(CaptureITReport.renderHtml(manifest), 'text/html');
+    const parsed = new DOMParser().parseFromString(CaptureITReport.renderHtml(manifest, { template: currentTemplateId() }), 'text/html');
     for (const selected of manifest.features.flatMap((feature) => feature.result.evidence)) {
       const source = editorState.evidence.find((item) => item.id === selected.captureId);
       const image = [...parsed.querySelectorAll('img')]
@@ -2872,9 +2928,11 @@
       'llmEndpoint',
       'llmModel',
       'llmTemplate',
+      'preferredReportTemplate',
     ]);
     session = stored.captureSession || null;
     lastExport = stored.lastExport || null;
+    preferredTemplate = stored.preferredReportTemplate || null;
     elements.llmAdapter.value = stored.llmAdapter || 'nh-ai-gateway';
     elements.llmApiKey.value = stored.llmApiKey || '';
     elements.llmEndpoint.value = stored.llmEndpoint || CaptureITLlm.DEFAULT_ENDPOINT;
