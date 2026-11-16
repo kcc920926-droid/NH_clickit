@@ -68,9 +68,10 @@ test('Tesler: 테스트케이스가 하나뿐이면 고르라고 하지 않고 �
   assert.match(functionBody(editor, 'featureForMapping'), /if \(editorState\.features\.length === 1\) \{/);
 });
 
-test('Von Restorff: 파란 주 버튼은 하나(증적 없으면 녹화 시작, 있으면 내보내기)', () => {
+test('Von Restorff: 파란 주 버튼은 하나(목적 고르는 중이면 목적 카드, 그다음 녹화 시작, 증적이 모이면 내보내기)', () => {
   const body = functionBody(editor, 'renderPrimaryAction');
-  assert.match(body, /elements\.toggleSession\.classList\.toggle\('button-primary', !active && !hasWork\);/);
+  assert.match(body, /const choosing = needsPurpose\(\);/);
+  assert.match(body, /elements\.toggleSession\.classList\.toggle\('button-primary', !active && !hasWork && !choosing\);/);
   assert.match(body, /elements\.openExport\.classList\.toggle\('button-primary', !active && hasWork\);/);
 });
 

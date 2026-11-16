@@ -69,8 +69,12 @@ textarea { resize: vertical; }
 .report-name:hover { background: var(--line-2); }
 #report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-name-caret { color: var(--ink-3); font-size: 10px; }
-.report-type { flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-2); background: var(--surface); font-size: 11px; white-space: nowrap; cursor: pointer; }
-.report-type:hover { border-color: #c9d0d8; color: var(--ink); }
+/* 유형 바꾸기: 이름표가 아니라 누르는 선택 상자로 보이게 테두리·화살표·마우스 반응을 준다. */
+.type-switch { display: inline-flex; flex: none; align-items: center; gap: 4px; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); background: var(--surface); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.type-switch:hover { border-color: var(--accent); background: var(--accent-soft); }
+.type-switch-label { color: var(--ink-3); font-weight: 400; }
+.type-switch-caret { color: var(--ink-3); font-size: 10px; }
+.type-switch.is-unset { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
 .save-status { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .more-menu-wrap { position: relative; }
 .more-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(20, 24, 30, .12); }
@@ -388,7 +392,7 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
   .capture-shortcut-hint { display: none; }
   .paste-zone:not(.paste-zone-warning) #paste-zone-hint { display: none; }
   .export-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .report-type { display: none; }
+  .type-switch-label { display: none; }
   .export-summary div:nth-child(3) { border-right: 0; }
   .export-summary div:nth-child(-n+3) { border-bottom: 1px solid var(--line-2); }
   .evidence-detail-body { grid-template-columns: minmax(0, 1fr); }
@@ -414,15 +418,20 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .message-action { margin-left: 4px; padding: 2px 6px; }
 button[aria-busy="true"] { cursor: progress; }
 
-/* 처음 시작: 무엇을 만들까요? 목적을 고르면 이름·칸·문서 모양이 정해진다. */
-.purpose-start { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.purpose-start h2 { font-size: 16px; }
-.purpose-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 6px; }
-.purpose-option { display: grid; align-content: start; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
-.purpose-option:hover { border-color: var(--accent); background: var(--accent-soft); }
+/* 처음 시작: 무엇을 만들까요? 목적 고르기가 첫 행동이라 수집 줄보다 위에, 카드는 누르는 버튼으로 보이게 둔다. */
+.purpose-start { display: grid; gap: 6px; padding: 16px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.purpose-start h2 { font-size: 17px; }
+.purpose-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-top: 6px; }
+.purpose-option { display: grid; grid-template-rows: auto auto 1fr auto; gap: 4px; padding: 12px; border: 1px solid #c9d0d8; border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; box-shadow: 0 1px 0 rgba(20, 24, 30, .04); }
+.purpose-option:hover, .purpose-option:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
 .purpose-option strong { font-size: 14px; }
 .purpose-when { color: var(--ink-2); font-size: 12px; }
 .purpose-output { color: var(--ink-3); font-size: 12px; }
 .purpose-output::before { content: "→ "; }
 .purpose-terms { color: var(--ink-3); font-size: 11px; }
+.purpose-pick { justify-self: start; margin-top: 4px; padding: 4px 10px; border-radius: var(--radius); color: #fff; background: var(--accent); font-size: 12px; font-weight: 600; }
+.purpose-option:hover .purpose-pick { background: var(--accent-ink); }
+/* 고르는 동안 수집 줄은 한 줄로 줄이고 버튼도 보조로 낮춘다(고르지 않고 바로 녹화해도 된다). */
+body.choosing .capture-bar .paste-zone, body.choosing .capture-shortcut-hint, body.choosing #record-target { display: none; }
+body.choosing .capture-title { font-size: 13px; }
 .workspace.choosing .workspace-grid, .workspace.choosing .pane-switch, .workspace.choosing .guidance { display: none; }

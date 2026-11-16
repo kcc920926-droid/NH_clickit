@@ -446,7 +446,7 @@ test('renderSession()은 녹화 상태를 빨간 점과 한국어 문구로 보�
   assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
   const body = extractFunctionBody(script, 'renderSession');
   assert.match(body, /elements\.sessionStatus\.className = `rec-dot \$\{active \? 'is-on'/);
-  assert.match(body, /elements\.toggleSession\.append\(starting \? '시작 중…' : active \? '녹화 종료' : '녹화 시작'\);/);
+  assert.match(body, /elements\.toggleSession\.append\(starting \? '시작 중…' : active \? '녹화 종료' : needsPurpose\(\) \? '바로 녹화' : '녹화 시작'\);/);
   // 녹화 중에는 아래 상태 줄에도 빨간 종료 버튼이 보인다(사이드 패널에서 목록을 내려 봐도 보이게).
   assert.match(body, /elements\.stopRecordingBar\.hidden = !active;/);
   assert.match(html, /<button id="stop-recording-bar" class="button button-stop"[^>]*hidden>/);

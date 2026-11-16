@@ -387,13 +387,13 @@
     elements.sessionStatus.className = `rec-dot ${active ? 'is-on' : starting ? 'is-starting' : ''}`.trim();
     // 목적을 고르기 전에는 어느 쪽에도 치우치지 않은 문구를 쓴다.
     const capture = needsPurpose()
-      ? { title: '화면을 녹화하세요', idle: '화면을 평소처럼 조작하면 화면과 맥락이 자동으로 저장됩니다.', recording: '화면을 평소처럼 조작하세요. 끝나면 녹화 종료를 누르세요.' }
+      ? { title: '목적을 고르지 않고 바로 녹화해도 됩니다', idle: '나중에 머리줄의 유형에서 목적을 정할 수 있습니다.', recording: '화면을 평소처럼 조작하세요. 끝나면 녹화 종료를 누르세요.' }
       : docType().capture;
     elements.captureFirstHeading.textContent = active ? '녹화 중' : starting ? '녹화를 시작하고 있습니다…' : capture.title;
     elements.captureModeHint.textContent = active ? capture.recording : capture.idle;
     elements.toggleSession.replaceChildren();
     if (active) elements.toggleSession.append(Object.assign(document.createElement('span'), { className: 'stop-glyph' }));
-    elements.toggleSession.append(starting ? '시작 중…' : active ? '녹화 종료' : '녹화 시작');
+    elements.toggleSession.append(starting ? '시작 중…' : active ? '녹화 종료' : needsPurpose() ? '바로 녹화' : '녹화 시작');
     elements.toggleSession.disabled = starting;
     elements.toggleSession.classList.toggle('is-recording', active);
     // 아래 상태 줄의 종료 버튼: 수집 줄이 스크롤로 가려져도 늘 보인다.
@@ -1747,8 +1747,10 @@
   function renderPrimaryAction() {
     const active = Boolean(session && session.active);
     const hasWork = editorState.evidence.length > 0;
-    elements.toggleSession.classList.toggle('button-primary', !active && !hasWork);
-    elements.toggleSession.classList.toggle('button-quiet', !active && hasWork);
+    // 목적을 고르는 중이면 목적 카드가 첫 행동이고, 녹화 시작은 "바로 녹화" 보조 버튼으로 낮춘다.
+    const choosing = needsPurpose();
+    elements.toggleSession.classList.toggle('button-primary', !active && !hasWork && !choosing);
+    elements.toggleSession.classList.toggle('button-quiet', !active && (hasWork || choosing));
     elements.openExport.classList.toggle('button-primary', !active && hasWork);
     elements.openExport.classList.toggle('button-quiet', active || !hasWork);
   }
@@ -1769,7 +1771,7 @@
   function renderWorkspace() {
     // 증적이 생기거나 테스트케이스를 만들면 "무엇을 만들까요?"는 물러난다(녹화·붙여넣기로 바로 시작한 경우).
     renderPurposeStart();
-    elements.reportType.textContent = needsPurpose() ? '목적 고르기' : docType().name;
+    renderTypeSwitch();
     renderReportSelector();
     renderGuidance();
     renderReadiness();
@@ -1875,7 +1877,7 @@
     const type = docType();
     elements.exportReport.textContent = type.exportLabel;
     renderPurposeStart();
-    elements.reportType.textContent = needsPurpose() ? '목적 고르기' : type.name;
+    renderTypeSwitch();
     elements.featureListHeading.textContent = type.item;
     elements.paneLabelFeatures.textContent = type.item;
     elements.addFeature.setAttribute('aria-label', `${type.item} 추가`);
@@ -1911,6 +1913,12 @@
     }));
   }
 
+  function renderTypeSwitch() {
+    const unset = needsPurpose();
+    byId('report-type-name').textContent = unset ? '목적 고르기' : docType().name;
+    elements.reportType.classList.toggle('is-unset', unset);
+  }
+
   // 아직 목적을 고르지 않은 빈 보고서면 작업대 대신 "무엇을 만들까요?"를 보여 준다.
   // 목적을 고르지 않고 바로 녹화하거나 붙여넣어도 된다(그때는 지난번 유형, 처음이면 QA로 본다).
   function needsPurpose() {
@@ -1922,6 +1930,7 @@
     const choosing = needsPurpose();
     elements.purposeStart.hidden = !choosing;
     elements.workspace.classList.toggle('choosing', choosing);
+    document.body.classList.toggle('choosing', choosing);
     if (!choosing || elements.purposeOptions.childElementCount) return;
     elements.purposeOptions.replaceChildren(...CaptureITDocumentTypes.DOCUMENT_TYPES.map((type) => {
       const button = document.createElement('button');
@@ -1934,6 +1943,7 @@
         Object.assign(document.createElement('span'), { className: 'purpose-when', textContent: type.when }),
         Object.assign(document.createElement('span'), { className: 'purpose-output', textContent: type.output }),
         Object.assign(document.createElement('span'), { className: 'purpose-terms', textContent: terms }),
+        Object.assign(document.createElement('span'), { className: 'purpose-pick', textContent: '이걸로 시작' }),
       );
       button.addEventListener('click', () => setDocumentType(type.id).catch((error) => setMessage(error.message, true)));
       return button;

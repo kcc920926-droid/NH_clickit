@@ -81,7 +81,7 @@ test('녹화 안내·내보내기 버튼·ZIP 이름·기본 양식이 목적을
   assert.match(session, /const capture = needsPurpose\(\)\s*\?[\s\S]*?: docType\(\)\.capture;/, '목적을 고르기 전엔 중립 문구, 고른 뒤엔 그 목적의 문구');
   assert.match(functionBody(editor, 'renderTerms'), /elements\.exportReport\.textContent = type\.exportLabel;/);
   assert.match(functionBody(editor, 'currentTemplateId'), /report && report\.documentTemplate \|\| docType\(\)\.defaultTemplate/);
-  assert.match(html, /<button id="report-type" class="report-type" type="button"/, '머리줄의 유형을 눌러 바꾼다');
+  assert.match(html, /<button id="report-type" class="type-switch" type="button"[^>]*>[\s\S]*?<span class="type-switch-caret" aria-hidden="true">▾<\/span><\/button>/, '머리줄의 유형은 화살표가 있는 선택 상자로 보여 누를 수 있다는 걸 알린다');
 });
 
 test('QA 전용 이름이 화면·뷰어·확장 설명에 남지 않는다', () => {
@@ -89,4 +89,13 @@ test('QA 전용 이름이 화면·뷰어·확장 설명에 남지 않는다', ()
   assert.doesNotMatch(editor, /'QA 증적'|exportFilename\('QA결과'\)|'테스트 화면을 녹화하세요'/);
   assert.doesNotMatch(read('extension/viewer.html'), /QA Viewer|QA 보고서/);
   assert.doesNotMatch(JSON.parse(read('extension/manifest.json')).description, /^사내 QA/);
+});
+
+test('목적을 고르는 중에는 목적 카드가 첫 행동: 수집 줄보다 위에 있고 녹화는 "바로 녹화" 보조 버튼', () => {
+  assert.ok(html.indexOf('id="purpose-start"') < html.indexOf('id="capture-bar"'), '목적 고르기가 수집 줄보다 먼저 나온다');
+  assert.match(functionBody(editor, 'renderPurposeStart'), /className: 'purpose-pick', textContent: '이걸로 시작'/);
+  assert.match(functionBody(editor, 'renderPurposeStart'), /document\.body\.classList\.toggle\('choosing', choosing\);/);
+  const css = read('extension/editor.css');
+  assert.match(css, /body\.choosing \.capture-bar \.paste-zone, body\.choosing \.capture-shortcut-hint/, '고르는 동안 수집 줄은 한 줄로 줄인다');
+  assert.match(css, /\.type-switch:hover \{ border-color: var\(--accent\);/);
 });
