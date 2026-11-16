@@ -1,6 +1,7 @@
 import './shared/domain.js';
 import './shared/storage.js';
 import './shared/evidence-dedupe.js';
+import './shared/pointer-marker.js';
 import './shared/capture-coordinator.js';
 import './shared/background-events.js';
 
@@ -159,12 +160,24 @@ async function captureWithRateLimit(windowId) {
   throw new Error('화면 캡처에 실패했습니다.');
 }
 
+// 설정에서 "클릭한 곳 표시"를 켰으면 클릭 후 화면에 누른 자리를 그려 넣는다. 실패하면 원래 화면을 쓴다.
+async function markClickPoint(imageDataUrl, request) {
+  const pointer = request && request.pointer;
+  if (!pointer) return imageDataUrl;
+  try {
+    const { pointerMarker } = await chrome.storage.local.get('pointerMarker');
+    return await CaptureITPointerMarker.markImageDataUrl(imageDataUrl, pointer, pointer.viewport, pointerMarker);
+  } catch {
+    return imageDataUrl;
+  }
+}
+
 function coordinatorFor(targetTabId, captureOptions = {}) {
   return CaptureITCaptureCoordinator.createCaptureCoordinator({
     loadSession,
     saveSession,
     persistEvidence,
-    captureVisible: () => captureVisibleGuarded(targetTabId, captureOptions),
+    captureVisible: async (request) => markClickPoint(await captureVisibleGuarded(targetTabId, captureOptions), request),
     // 중복 화면 합치기: 직전 증적과 거의 같은 화면이면 새 증적 대신 직전 증적에 합친다.
     fingerprintImage: (dataUrl) => CaptureITEvidenceDedupe.fingerprintImageDataUrl(dataUrl),
     loadEvidence: (id) => CaptureITStorage.getEvidence(id),
@@ -202,6 +215,7 @@ async function captureRequest(message, sender) {
     formSelector: message.formSelector,
     dirtyFields: message.dirtyFields,
     source: message.source,
+    pointer: message.pointer || null,
   });
   await chrome.runtime.sendMessage({ type: 'EVIDENCE_CREATED', evidenceId: evidence.id }).catch(() => {});
   await chrome.tabs.sendMessage(sender.tab.id, {

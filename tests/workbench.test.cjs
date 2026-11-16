@@ -64,9 +64,10 @@ test('테스트케이스를 고르지 않고 연결을 누르면, 다음에 누�
   assert.match(editor, /event\.key === 'Escape' && pendingMapEvidenceIds/);
 });
 
-test('검증 내용은 카드에서 입력한다(보고서 표에 들어가는데 입력란이 없어 경고만 떴다)', () => {
+test('검증 내용 등 항목의 칸은 카드에서 입력한다(보고서 표에 들어가는데 입력란이 없어 경고만 떴다)', () => {
   const card = functionBody(editor, 'featureCard');
-  assert.match(card, /verificationInput\.dataset\.featureField = 'verification';/);
+  assert.match(card, /for \(const field of docType\(\)\.fields\) \{/);
+  assert.match(card, /input\.dataset\.featureField = field\.key;/);
   assert.match(functionBody(editor, 'commitFeatureField'), /else if \(field === 'verification'\) feature\.result\.verification = value;/);
 });
 
@@ -97,5 +98,5 @@ test('화면 안내는 끌어다 놓기 대신 붙여넣기·이미지 불러오
   assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), /끌어다|드래그/);
   const body = functionBody(editor, 'renderLinkTarget');
   assert.match(body, /'연결 버튼을 누르면 → '/);
-  assert.match(body, /'연결 버튼을 누른 뒤 연결할 테스트케이스를 고르세요\.'/);
+  assert.match(body, /`연결 버튼을 누른 뒤 연결할 \$\{itemWord\('을\/를'\)\} 고르세요\.`/);
 });

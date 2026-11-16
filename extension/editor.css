@@ -69,6 +69,7 @@ textarea { resize: vertical; }
 .report-name:hover { background: var(--line-2); }
 #report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-name-caret { color: var(--ink-3); font-size: 10px; }
+.report-type { flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-2); font-size: 11px; white-space: nowrap; }
 .save-status { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .more-menu-wrap { position: relative; }
 .more-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(20, 24, 30, .12); }
@@ -86,8 +87,13 @@ textarea { resize: vertical; }
 .capture-title { font-size: 15px; font-weight: 700; }
 .capture-hint { margin: 2px 0 0; color: var(--ink-2); font-size: 12px; }
 .capture-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-#toggle-session.is-recording { color: var(--rec); border-color: #ecc5c5; background: var(--surface); }
-#toggle-session.is-recording:hover { background: var(--fail-soft); }
+/* 녹화 중에는 종료 버튼이 화면에서 가장 눈에 띄는 버튼이다(빨간 바탕). 아래 상태 줄에도 같은 버튼을 둬서
+   사이드 패널에서 목록을 내려 봐도 늘 보이게 한다. */
+.button-stop, #toggle-session.is-recording { color: #fff; background: var(--rec); }
+.button-stop:hover:not(:disabled), #toggle-session.is-recording:hover:not(:disabled) { background: #a31f1f; }
+.stop-glyph { display: inline-block; width: 9px; height: 9px; border-radius: 1px; background: currentColor; }
+.status-bar.is-recording { border-top-color: #ecc5c5; background: #fff8f8; }
+.status-bar.is-recording #open-export { color: var(--ink); border-color: var(--line); background: var(--surface); }
 .capture-meta { margin: 0; color: var(--ink-2); font-size: 12px; }
 .capture-meta strong { color: var(--ink); font-weight: 600; }
 .capture-target { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
@@ -173,8 +179,7 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .evidence-role-badge.role-result { color: var(--accent-ink); font-weight: 600; }
 .evidence-role-badge.role-manual { color: var(--ink-2); }
 .evidence-merged-badge { flex: none; color: var(--ink-3); font-size: 11px; cursor: help; }
-.map-to-feature-button { border: 0; color: var(--ink-2); background: transparent; }
-.map-to-feature-button:hover { color: var(--accent); background: var(--accent-soft); }
+.map-to-feature-button:hover:not(:disabled) { color: var(--accent); border-color: #b8c9ef; background: var(--accent-soft); }
 
 /* 드로어 안의 연결된 증적 카드 */
 .evidence-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
@@ -268,6 +273,34 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .wide { grid-column: 1 / -1; }
 .report-toolbar { display: grid; gap: 4px; padding: 12px 14px 0; }
 .report-toolbar .sheet-actions { padding: 8px 0 14px; }
+.type-picker { margin: 10px 0 0; padding: 0; border: 0; }
+.type-picker legend { margin-bottom: 4px; font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.type-picker .hint { margin-bottom: 6px; }
+.type-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px; }
+.type-option { position: relative; display: grid; gap: 1px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.type-option:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.type-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.type-option input { position: absolute; opacity: 0; pointer-events: none; }
+.type-option-name { color: var(--ink); font-size: 13px; font-weight: 700; }
+.type-option:has(input:checked) .type-option-name::before { content: "✓ "; color: var(--accent); }
+.type-option-summary { color: var(--ink-3); font-size: 11px; font-weight: 400; }
+.export-summary.no-verdict .summary-verdict { display: none; }
+.capture-settings-body { display: grid; gap: 14px; padding: 14px; }
+.switch-row { display: flex; align-items: flex-start; gap: 10px; color: var(--ink); font-size: 13px; font-weight: 400; cursor: pointer; }
+.switch-row input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; }
+.switch-row > span { display: grid; gap: 2px; }
+.pointer-options { display: grid; gap: 10px; }
+.pointer-options.is-off { opacity: .45; pointer-events: none; }
+.choice-row { display: grid; grid-template-columns: 40px 1fr; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; }
+.choice-row legend { float: left; color: var(--ink-3); font-size: 12px; font-weight: 600; }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.choice { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); font-size: 12px; font-weight: 600; cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice canvas { width: 22px; height: 22px; }
+.swatch { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15); }
+.pointer-preview { width: 100%; max-width: 320px; height: auto; border: 1px solid var(--line); border-radius: var(--radius); }
 .storage-list { display: grid; gap: 0; margin: 0; padding: 6px 14px 0; }
 .storage-list div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-2); }
 .storage-list dt { color: var(--ink-3); font-size: 12px; }
@@ -289,6 +322,10 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .export-summary div:last-child { border-right: 0; }
 .export-summary dt { color: var(--ink-3); font-size: 11px; white-space: nowrap; }
 .export-summary dd { margin: 0; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.report-info { border: 1px solid var(--line); border-radius: var(--radius); }
+.report-info summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.report-info summary .hint { font-weight: 400; }
+.report-info .form-grid { padding: 0 10px 12px; }
 .export-check h3, .template-picker legend { margin-bottom: 6px; font-size: 13px; font-weight: 700; }
 .export-check ul { display: grid; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
 .export-check ul:empty::before { content: "✓ 빠진 것이 없습니다."; color: var(--pass); }
@@ -347,6 +384,7 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
   .capture-shortcut-hint { display: none; }
   .paste-zone:not(.paste-zone-warning) #paste-zone-hint { display: none; }
   .export-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .report-type { display: none; }
   .export-summary div:nth-child(3) { border-right: 0; }
   .export-summary div:nth-child(-n+3) { border-bottom: 1px solid var(--line-2); }
   .evidence-detail-body { grid-template-columns: minmax(0, 1fr); }
@@ -357,3 +395,17 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* 버튼 설명(바로 뜨는 말풍선). popover로 맨 위 층에 띄워 열린 대화상자 위에도 보인다. */
+.captureit-tip { position: fixed; inset: auto; z-index: 2000; max-width: 240px; margin: 0; padding: 3px 7px; overflow: visible; border: 0; border-radius: 4px; color: #fff; background: #23272d; font: 12px/1.25 Pretendard, "Segoe UI", "Malgun Gothic", system-ui, sans-serif; pointer-events: none; white-space: normal; box-shadow: 0 4px 12px rgba(20, 24, 30, .2); }
+.captureit-tip[hidden] { display: none; }
+
+/* 증적 세트의 ⋯ 메뉴 */
+.mini-menu-wrap { position: relative; }
+.mini-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; display: grid; min-width: 150px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(20, 24, 30, .12); }
+.more-menu-item.danger { color: var(--fail); }
+.more-menu-item:disabled { color: var(--ink-3); }
+.map-to-feature-button { min-height: 28px; gap: 4px; padding: 3px 9px; font-size: 12px; }
+.map-to-feature-button svg { width: 14px; height: 14px; }
+.message-action { margin-left: 4px; padding: 2px 6px; }
+button[aria-busy="true"] { cursor: progress; }

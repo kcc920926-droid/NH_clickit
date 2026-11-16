@@ -51,12 +51,12 @@ test('renderGuidance는 테스트케이스가 없으면 연결 버튼으로 바�
   assert.match(renderGuidanceBody, /const featureCount = editorState\.features\.length;/);
   assert.match(
     renderGuidanceBody,
-    /else if \(featureCount === 0\) messages\.push\('증적 세트의 연결 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다\.'\)/,
+    /else if \(featureCount === 0\) messages\.push\(`증적 세트의 연결 버튼을 누르면 \$\{itemWord\('이\/가'\)\} 만들어지며 연결됩니다\.`\)/,
   );
 });
 
 test('renderGuidance는 연결 → 판정 → 내보내기 순서로 남은 일을 안내한다', () => {
-  const order = ['unmappedFeatures > 0', 'unjudged > 0', '모두 판정했습니다. 내보내기를 누르세요.'];
+  const order = ['unmappedFeatures > 0', 'unjudged > 0', '`모두 ${verdict.label}했습니다. 내보내기를 누르세요.`'];
   const positions = order.map((text) => renderGuidanceBody.indexOf(text));
   assert.ok(positions.every((position) => position > 0), JSON.stringify(positions));
   assert.ok(positions[0] < positions[1] && positions[1] < positions[2]);
@@ -112,7 +112,7 @@ test('renderFeature는 evidenceIds 매핑 여부에 따라 서로 다른 feature
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요\. 이 테스트케이스가 골라져 있으면 바로 연결됩니다\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*`증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요\. 이 \$\{itemWord\('이\/가'\)\} 골라져 있으면 바로 연결됩니다\.`/,
     '매핑된 증적이 없으면 매핑 유도 문구를 textContent에 설정해야 한다',
   );
   assert.match(

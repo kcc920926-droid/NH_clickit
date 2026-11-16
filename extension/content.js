@@ -222,7 +222,48 @@
     return false;
   }
 
+  // 클릭한 곳 표시용: 마지막 클릭 위치(최상위 화면 기준 CSS 픽셀). 다른 출처의 iframe 안이면 위치를
+  // 바꿀 수 없어 남기지 않는다(표시 없이 찍힌다).
+  let lastPointer = null;
+
+  function topPointFromEvent(event) {
+    let x = event.clientX;
+    let y = event.clientY;
+    let win = window;
+    try {
+      while (win !== win.top) {
+        const frame = win.frameElement;
+        if (!frame) return null;
+        const rect = frame.getBoundingClientRect();
+        x += rect.left + frame.clientLeft;
+        y += rect.top + frame.clientTop;
+        win = win.parent;
+      }
+      return { x, y, win, scrollX: win.scrollX, scrollY: win.scrollY, viewport: { width: win.innerWidth, height: win.innerHeight }, at: Date.now() };
+    } catch {
+      return null;
+    }
+  }
+
+  // 클릭 뒤 화면이 자리를 잡는 동안 스크롤됐으면 그만큼 옮긴다. 오래된 클릭은 쓰지 않는다.
+  function takePointerFor(triggerType) {
+    const pointer = lastPointer;
+    lastPointer = null;
+    if (triggerType !== 'click' || !pointer || Date.now() - pointer.at > 10000) return null;
+    let dx = 0;
+    let dy = 0;
+    try {
+      dx = pointer.win.scrollX - pointer.scrollX;
+      dy = pointer.win.scrollY - pointer.scrollY;
+    } catch {
+      // 창에 접근할 수 없으면 옮기지 않는다.
+    }
+    return { x: pointer.x - dx, y: pointer.y - dy, viewport: pointer.viewport };
+  }
+
   async function requestCapture(request) {
+    const pointer = takePointerFor(request && request.triggerType);
+    if (pointer) request = { ...request, pointer };
     const toast = receiptToast;
     if (toast) {
       toast.style.visibility = 'hidden';
@@ -401,6 +442,7 @@
       return;
     }
     lastClickAt = Date.now();
+    lastPointer = topPointFromEvent(event);
     const beforeContext = collectContext(event.target);
     captureSettledEvent('click', event.target, beforeContext, `${window.location.href}\u0000${targetKey(event.target)}`);
   }, true);

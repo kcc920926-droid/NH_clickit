@@ -272,16 +272,17 @@ test('captureGraphCard는 세트 연결 해제/삭제 버튼을 헤더 액션 �
   assert.match(unmapEvidenceGroupBody, /await saveReport\(\)/);
 
   const captureGraphCardBody = extractFunctionBody(source, 'captureGraphCard');
+  // 가끔 쓰는 세트 동작은 ⋯ 메뉴에 둔다(밖에는 "연결"과 접기만).
   assert.match(
     captureGraphCardBody,
-    /iconButton\('세트 연결 해제',\s*'link-off',\s*\(\)\s*=>\s*unmapEvidenceGroup\(group\.evidenceIds\),\s*mappedFeatureIds\.length\s*===\s*0\)/,
-    'captureGraphCard는 매핑된 것이 없을 때 비활성화되는 세트 연결 해제 버튼을 렌더링해야 한다',
+    /\{ label: '세트 연결 해제', run: \(\) => unmapEvidenceGroup\(group\.evidenceIds\), disabled: mappedFeatureIds\.length === 0 \}/,
+    '연결된 것이 없으면 세트 연결 해제는 비활성이다',
   );
   assert.match(
     captureGraphCardBody,
-    /iconButton\('세트 삭제',\s*'trash',\s*\(\)\s*=>\s*removeEvidenceGroup\(group\.evidenceIds\),\s*false,\s*'danger'\)/,
-    'captureGraphCard는 danger 스타일의 세트 삭제 버튼을 렌더링해야 한다',
+    /\{ label: '세트 삭제', run: \(\) => removeEvidenceGroup\(group\.evidenceIds\), danger: true \}/,
   );
+  assert.match(captureGraphCardBody, /overflowMenu\('세트 메뉴', \[/);
   assert.match(
     captureGraphCardBody,
     /headerActions\.className\s*=\s*'capture-graph-header-actions'/,
@@ -371,21 +372,14 @@ test('requestEvidenceGroupTitleSuggestion은 evidence가 없으면 에러를 던
   assert.match(body, /setMessage\('세트 제목을 추천받았습니다\.'\)/, '성공 메시지를 표시해야 한다');
 });
 
-test('captureGraphCard는 헤더 액션에 currentFeature()와 무관한 제목 추천 버튼을 렌더링한다', () => {
+test('captureGraphCard의 ⋯ 메뉴에는 currentFeature()와 무관한 AI 제목 짓기가 있다', () => {
   const captureGraphCardBody = extractFunctionBody(source, 'captureGraphCard');
   assert.match(
     captureGraphCardBody,
-    /iconButton\('제목 추천받기',\s*'sparkle',\s*\(\)\s*=>\s*\{[\s\S]*?requestEvidenceGroupTitleSuggestion\(group\)\.catch\(\(error\)\s*=>\s*setMessage\(`제목 추천 실패: \$\{error\.message\}`,\s*true\)\)/,
-    '제목 추천 버튼은 requestEvidenceGroupTitleSuggestion을 호출하고 실패 시 setMessage로 에러를 표시해야 한다',
+    /\{ label: 'AI로 제목 짓기', run: \(\) => requestEvidenceGroupTitleSuggestion\(group\)\.catch\(\(error\) => setMessage\(`제목 추천 실패: \$\{error\.message\}`, true\)\) \}/,
   );
-  assert.doesNotMatch(
-    captureGraphCardBody.slice(
-      captureGraphCardBody.indexOf("iconButton('제목 추천받기'"),
-      captureGraphCardBody.indexOf("iconButton('제목 추천받기'") + 400,
-    ),
-    /disabled\s*=\s*!currentFeature\(\)/,
-    '제목 추천 버튼은 currentFeature() 상태로 비활성화되면 안 된다',
-  );
+  const item = captureGraphCardBody.slice(captureGraphCardBody.indexOf("label: 'AI로 제목 짓기'"), captureGraphCardBody.indexOf("label: 'AI로 제목 짓기'") + 200);
+  assert.doesNotMatch(item, /disabled/, '제목 짓기는 테스트케이스 선택과 상관없이 쓸 수 있다');
 });
 
 // AI_Buttons_To_Top: "증적 설명 생성"/"테스트케이스 설명 자동 생성" 버튼을 드로어 최상단(선택된
@@ -511,5 +505,5 @@ test('연결된 증적 카드는 연결 해제(사진 유지)와 사진 삭제�
   assert.match(body, /button\('연결 해제', \(\) => unmapSingleEvidence\(evidence\.id\)/);
   assert.match(body, /button\('사진 삭제', \(\) => removeEvidence\(evidence\.id\)\)/);
   assert.match(extractFunctionBody(source, 'unmapSingleEvidence'), /CaptureITDomain\.unmapEvidence\(editorState, evidenceId\)/);
-  assert.match(extractFunctionBody(source, 'removeEvidence'), /if \(!confirm\('[^']*연결 해제/, '삭제 확인 문구에 연결 해제 안내가 있어야 한다');
+  assert.match(extractFunctionBody(source, 'removeEvidence'), /if \(!confirm\(`[^`]*연결 해제/, '삭제 확인 문구에 연결 해제 안내가 있어야 한다');
 });

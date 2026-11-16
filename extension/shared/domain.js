@@ -207,23 +207,6 @@
     feature.result.actualResult = fields.actualResult === undefined ? '' : fields.actualResult;
   }
 
-  function saveAsProject(draftReport, projectDetails) {
-    const projectName = projectDetails && projectDetails.projectName;
-    if (!projectName || !projectName.trim()) {
-      throw new Error('프로젝트명을 입력하십시오.');
-    }
-    return {
-      ...draftReport,
-      projectName,
-      title: projectDetails.title ?? '',
-      author: projectDetails.author ?? '',
-      changePurpose: projectDetails.changePurpose ?? '',
-      changeSummary: projectDetails.changeSummary ?? '',
-      configurationOverview: projectDetails.configurationOverview ?? '',
-      isDraft: false,
-    };
-  }
-
   function unmapEvidence(state, evidenceId) {
     const evidence = findEvidence(state, evidenceId);
     removeFromFeatures(state, evidenceId);
@@ -257,19 +240,37 @@
     refreshInbox(state);
   }
 
-  function validationWarnings(report) {
+  // documentType(선택): CaptureITDocumentTypes의 유형. 주면 그 유형에 있는 칸과 상태만 검사하고
+  // 문구도 그 유형의 이름을 쓴다. 주지 않으면 QA 결과 보고 기준(예전과 같다).
+  const QA_WARNING_TEXT = {
+    noItems: '테스트케이스가 없습니다.',
+    unsetVerdict: '판정이 선택되지 않았습니다.',
+    failWithoutResult: 'FAIL 판정의 실제 결과가 비어 있습니다.',
+  };
+  const QA_FIELDS = [
+    { key: 'verification', label: '검증 내용' },
+    { key: 'expectedResult', label: '기대 결과' },
+    { key: 'actualResult', label: '실제 결과' },
+  ];
+  const FIELD_CODES = { verification: 'MISSING_VERIFICATION', expectedResult: 'MISSING_EXPECTED_RESULT', actualResult: 'MISSING_ACTUAL_RESULT' };
+
+  function validationWarnings(report, documentType = null) {
     const warnings = [];
-    if (!report.features.length) warnings.push({ code: 'NO_FEATURES', message: '테스트케이스가 없습니다.' });
+    const text = documentType ? documentType.warningText : QA_WARNING_TEXT;
+    const fields = documentType ? documentType.fields : QA_FIELDS;
+    const hasVerdict = documentType ? Boolean(documentType.verdict) : true;
+    if (!report.features.length) warnings.push({ code: 'NO_FEATURES', message: text.noItems });
     for (const feature of report.features) {
       const { result } = feature;
       const add = (code, message) => warnings.push({ code, featureId: feature.id, message });
-      if (!result.status) add('UNSET_VERDICT', '판정이 선택되지 않았습니다.');
+      if (hasVerdict && !result.status) add('UNSET_VERDICT', text.unsetVerdict);
       if (!result.evidenceIds.length) add('NO_EVIDENCE', '연결된 증적이 없습니다.');
-      if (!result.verification.trim()) add('MISSING_VERIFICATION', '검증 내용이 비어 있습니다.');
-      if (!result.expectedResult.trim()) add('MISSING_EXPECTED_RESULT', '기대 결과가 비어 있습니다.');
-      if (!result.actualResult.trim()) add('MISSING_ACTUAL_RESULT', '실제 결과가 비어 있습니다.');
-      if (result.status === 'FAIL' && !result.actualResult.trim()) {
-        add('FAIL_WITHOUT_ACTUAL_RESULT', 'FAIL 판정의 실제 결과가 비어 있습니다.');
+      for (const field of fields) {
+        if (!String(result[field.key] || '').trim()) add(FIELD_CODES[field.key], `${field.label} 칸이 비어 있습니다.`);
+      }
+      const hasActual = fields.some((field) => field.key === 'actualResult');
+      if (hasVerdict && hasActual && result.status === 'FAIL' && !String(result.actualResult || '').trim()) {
+        add('FAIL_WITHOUT_ACTUAL_RESULT', text.failWithoutResult);
       }
     }
     return warnings;
@@ -293,7 +294,6 @@
     moveFeature,
     nextSequence,
     overallStatus,
-    saveAsProject,
     unmapEvidence,
     validationWarnings,
   };

@@ -202,7 +202,7 @@ test('nh-ai-gateway adapter does not set response_format (liteLLM payload shape 
   assert.equal(Object.hasOwn(body, 'response_format'), false);
 });
 
-test('nh-ai-gateway adapter also extracts payload images into separate image_url content parts within the single Anthropic-style user message', () => {
+test('nh-ai-gateway adapter sends payload images as Anthropic image blocks within the single user message', () => {
   const llm = loadLlm();
   const image = 'data:image/jpeg;base64,EEEEFFFF';
   const request = llm.buildAdapterRequest({
@@ -217,12 +217,48 @@ test('nh-ai-gateway adapter also extracts payload images into separate image_url
   assert.equal(Object.hasOwn(body, 'api_key'), false, 'api_key field should no longer be used for this adapter');
   assert.equal(request.options.headers.Authorization, 'Bearer secret-key');
   assert.equal(body.messages.length, 1);
-  assert.ok(Array.isArray(body.messages[0].content));
-  const imageParts = body.messages[0].content.filter((part) => part.type === 'image_url');
-  const textPart = body.messages[0].content.find((part) => part.type === 'text');
-  assert.equal(imageParts.length, 1);
-  assert.equal(imageParts[0].image_url.url, image);
-  assert.equal(textPart.text.includes(image), false, 'raw base64 should not remain embedded in the text part');
+  const parts = body.messages[0].content;
+  assert.equal(parts.filter((part) => part.type === 'image_url').length, 0, 'OpenAI image_url blocks are not part of the Anthropic Messages format');
+  const imageParts = parts.filter((part) => part.type === 'image');
+  assert.deepEqual(imageParts, [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'EEEEFFFF' } }]);
+  const textPart = parts.find((part) => part.type === 'text');
+  assert.equal(textPart.text.includes('EEEEFFFF'), false, 'raw base64 should not remain embedded in the text part');
+});
+
+test('nh-ai-gateway에 넉넉한 출력 한도를 주고, 다시 요청할 때는 더 크게 줄 수 있다', () => {
+  const llm = loadLlm();
+  const base = { adapter: 'nh-ai-gateway', endpoint: llm.DEFAULT_ENDPOINT, payload: { task: 'x' } };
+  assert.ok(llm.DEFAULT_MAX_TOKENS >= 4096, '1024는 생각하는 모델이 답을 쓰기 전에 다 써 버렸다');
+  assert.equal(JSON.parse(llm.buildAdapterRequest(base).options.body).max_tokens, llm.DEFAULT_MAX_TOKENS);
+  assert.equal(JSON.parse(llm.buildAdapterRequest({ ...base, maxTokens: llm.RETRY_MAX_TOKENS }).options.body).max_tokens, llm.RETRY_MAX_TOKENS);
+});
+
+test('빈 응답은 이유를 한국어로 알려 주고, 출력 한도 때문이면 다시 요청할 수 있다고 표시한다', () => {
+  const llm = loadLlm();
+  // Anthropic: 생각 블록만 있고 글자 블록이 없다
+  assert.throws(
+    () => llm.parseAdapterResponse({ content: [{ type: 'thinking', thinking: '...' }], stop_reason: 'max_tokens' }),
+    (error) => /AI가 빈 응답을 보냈습니다\(답을 쓰기 전에 출력 한도에 걸렸습니다\)/.test(error.message) && error.outputLimit === true && error.code === 'EMPTY_RESPONSE',
+  );
+  // OpenAI 계열: content null, finish_reason length
+  assert.throws(
+    () => llm.parseAdapterResponse({ choices: [{ message: { content: null }, finish_reason: 'length' }] }),
+    (error) => error.outputLimit === true,
+  );
+  assert.throws(
+    () => llm.parseAdapterResponse({ content: [], stop_reason: 'end_turn' }),
+    (error) => /종료 이유: end_turn/.test(error.message) && error.outputLimit === false,
+  );
+  // 중간에 끊긴 JSON
+  assert.throws(
+    () => llm.parseAdapterResponse({ content: [{ type: 'text', text: '{"testPurpose": "주문' }], stop_reason: 'max_tokens' }),
+    (error) => /JSON으로 읽지 못했습니다\. 출력 한도에 걸려/.test(error.message) && error.outputLimit === true,
+  );
+  // 생각 블록 뒤의 글자 블록은 정상으로 읽는다
+  assert.deepEqual(
+    llm.parseAdapterResponse({ content: [{ type: 'thinking', thinking: '...' }, { type: 'text', text: '{"ok":true}' }], stop_reason: 'end_turn' }),
+    { ok: true },
+  );
 });
 
 test('defaultEndpointForAdapter returns the internal liteLLM gateway for nh-ai-gateway and the official OpenAI endpoint for openai-compatible', () => {

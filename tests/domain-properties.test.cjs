@@ -346,50 +346,6 @@ test('Streamlined Property 10: Quick_Mapping_Dialog matches mapEvidenceBatch and
   );
 });
 
-test('Streamlined Property 4: saving as a project always defaults omitted optional fields and never throws', () => {
-  // Feature: streamlined-report-authoring, Property 4: 프로젝트 저장 시 선택 필드는 항상 빈 문자열로 기본값 처리되고 저장은 실패하지 않는다
-  // For any Draft_Report and any combination of provided/omitted values for 보고서명, 작성자,
-  // changePurpose, changeSummary, and configurationOverview (with a always-provided non-empty
-  // 프로젝트명), saving as a Project SHALL never throw a validation error, SHALL set each omitted
-  // optional field to the empty string, and SHALL preserve each provided field's value verbatim.
-  const domain = loadDomain();
-
-  const optionalFieldArbitrary = fc.option(fc.string({ maxLength: 20 }), { nil: undefined });
-
-  fc.assert(
-    fc.property(
-      fc.record({
-        projectName: fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
-        title: optionalFieldArbitrary,
-        author: optionalFieldArbitrary,
-        changePurpose: optionalFieldArbitrary,
-        changeSummary: optionalFieldArbitrary,
-        configurationOverview: optionalFieldArbitrary,
-      }),
-      (projectDetails) => {
-        const draft = domain.createReport('', 'REPORT-1');
-        draft.isDraft = true;
-
-        let saved;
-        assert.doesNotThrow(() => {
-          saved = domain.saveAsProject(draft, projectDetails);
-        });
-
-        assert.equal(saved.projectName, projectDetails.projectName);
-        for (const field of ['title', 'author', 'changePurpose', 'changeSummary', 'configurationOverview']) {
-          const provided = projectDetails[field];
-          if (provided === undefined) {
-            assert.equal(saved[field], '');
-          } else {
-            assert.equal(saved[field], provided);
-          }
-        }
-        assert.equal(saved.isDraft, false);
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
 
 test('Streamlined Property 11: unset Verdicts are always tallied as not-yet-judged regardless of default display', () => {
   // Feature: streamlined-report-authoring, Property 11: Default_Verdict_Selection의 UI 표시와 무관하게 미확인 Test_Result_Set은 항상 미판정으로 집계된다

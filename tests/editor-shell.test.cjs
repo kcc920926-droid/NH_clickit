@@ -200,73 +200,35 @@ test('editor preview replaces relative report image paths by exact attribute val
   assert.doesNotMatch(script, /CSS\.escape\(selected\.file\)/);
 });
 
-test('editor shell places capture/import controls before the save-project dialog', () => {
+test('수집 줄이 맨 위에 오고, 보고서 정보는 내보내기 창 안에 있다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
-
-  const captureFirstIndex = html.indexOf('capture-first-panel');
-  const toggleSessionIndex = html.indexOf('toggle-session');
-  const saveProjectDialogIndex = html.indexOf('save-project-dialog');
-  const reportTitleIndex = html.indexOf('report-title');
-
-  assert.notEqual(captureFirstIndex, -1, 'capture-first-panel should exist');
-  assert.notEqual(toggleSessionIndex, -1, 'toggle-session should exist');
-  assert.notEqual(saveProjectDialogIndex, -1, 'save-project-dialog should exist');
-  assert.notEqual(reportTitleIndex, -1, 'report-title should exist');
-
-  assert.ok(
-    captureFirstIndex < saveProjectDialogIndex,
-    'capture-first-panel should appear before save-project-dialog in markup order',
-  );
-  assert.ok(
-    toggleSessionIndex < reportTitleIndex,
-    'toggle-session should appear before report-title in markup order',
-  );
+  assert.ok(html.indexOf('capture-first-panel') < html.indexOf('id="export-dialog"'));
+  assert.ok(html.indexOf('id="toggle-session"') < html.indexOf('id="report-title"'));
 });
 
-test('editor shell keeps identifying report fields inside the save-project dialog', () => {
+test('보고서 정보 칸은 내보내기 창의 접히는 구역에 있고, 모두 선택 입력이며 적는 대로 저장된다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
-
-  const dialogMatch = html.match(/<dialog id=["']save-project-dialog["'][\s\S]*?<\/dialog>/);
-  assert.ok(dialogMatch, 'save-project-dialog markup block should be found');
-  const dialogHtml = dialogMatch[0];
-
-  for (const id of [
-    'report-title',
-    'project-name',
-    'report-author',
-    'change-purpose',
-    'change-summary',
-    'configuration-overview',
-  ]) {
-    assert.match(
-      dialogHtml,
-      new RegExp(`id=["']${id}["']`),
-      `#${id} should be inside save-project-dialog`,
-    );
+  const script = fs.readFileSync(editorScriptPath, 'utf8');
+  const sectionMatch = html.match(/<details id="report-info"[\s\S]*?<\/details>/);
+  assert.ok(sectionMatch, '#report-info should exist');
+  const exportDialog = html.match(/<dialog id=["']export-dialog["'][\s\S]*?<\/dialog>/)[0];
+  assert.ok(exportDialog.includes('id="report-info"'), 'report info lives in the export dialog');
+  for (const id of ['report-title', 'project-name', 'report-author', 'change-purpose', 'change-summary', 'configuration-overview']) {
+    assert.match(sectionMatch[0], new RegExp(`id=["']${id}["']`), `#${id} should be in report info`);
   }
+  assert.doesNotMatch(sectionMatch[0], /required/, '프로젝트명을 포함해 모두 선택 입력이다');
+  const bind = extractFunctionBody(script, 'bindInputs');
+  assert.match(bind, /addEventListener\('change'/);
+  assert.match(bind, /queueSave\(\);/);
 });
 
-test('editor shell places the save-project trigger after the preview and export actions', () => {
+test('"프로젝트로 저장" 절차(대화상자·필수 프로젝트명·저장 버튼)는 없다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
-
-  // 'open-save-project'만으로 substring 검색하면 header 더보기 메뉴의 'open-save-project-menu'가
-  // 먼저 매치되므로, 정확한 id="open-save-project" 속성으로 찾는다.
-  const openSaveProjectIndex = html.search(/id=["']open-save-project["']/);
-  const previewReportIndex = html.indexOf('preview-report');
-  const exportReportIndex = html.indexOf('export-report');
-
-  assert.notEqual(openSaveProjectIndex, -1, 'open-save-project should exist');
-  assert.notEqual(previewReportIndex, -1, 'preview-report should exist');
-  assert.notEqual(exportReportIndex, -1, 'export-report should exist');
-
-  assert.ok(
-    openSaveProjectIndex > previewReportIndex,
-    'open-save-project should appear after preview-report in markup order',
-  );
-  assert.ok(
-    openSaveProjectIndex > exportReportIndex,
-    'open-save-project should appear after export-report in markup order',
-  );
+  const script = fs.readFileSync(editorScriptPath, 'utf8');
+  assert.doesNotMatch(html, /save-project-dialog|open-save-project|submit-save-project/);
+  assert.doesNotMatch(script, /saveAsProject|submitSaveAsProject|프로젝트로 저장/);
+  assert.equal(require('../extension/shared/domain.js').saveAsProject, undefined);
+  assert.match(html, /id="open-report-info"/, '⋮ 메뉴에서 보고서 정보로 바로 간다');
 });
 
 test('editor shell exposes quick-mapping and report-draft-suggestion dialog elements', () => {
@@ -484,7 +446,12 @@ test('renderSession()은 녹화 상태를 빨간 점과 한국어 문구로 보�
   assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
   const body = extractFunctionBody(script, 'renderSession');
   assert.match(body, /elements\.sessionStatus\.className = `rec-dot \$\{active \? 'is-on'/);
-  assert.match(body, /elements\.toggleSession\.textContent = starting \? '시작 중…' : active \? '녹화 종료' : '녹화 시작';/);
+  assert.match(body, /elements\.toggleSession\.append\(starting \? '시작 중…' : active \? '녹화 종료' : '녹화 시작'\);/);
+  // 녹화 중에는 아래 상태 줄에도 빨간 종료 버튼이 보인다(사이드 패널에서 목록을 내려 봐도 보이게).
+  assert.match(body, /elements\.stopRecordingBar\.hidden = !active;/);
+  assert.match(html, /<button id="stop-recording-bar" class="button button-stop"[^>]*hidden>/);
+  const css = fs.readFileSync(editorCssPath, 'utf8');
+  assert.match(css, /\.button-stop, #toggle-session\.is-recording \{ color: #fff; background: var\(--rec\); \}/);
   assert.doesNotMatch(script, /textContent = active \? 'ON' : 'OFF'/);
   assert.doesNotMatch(html, /자동캡쳐/);
   assert.doesNotMatch(script, /'자동캡쳐/);
@@ -501,11 +468,6 @@ test('existing handler function names and domain/LLM call sites still exist in e
     'mapEvidenceIds handler should still exist',
   );
   assert.match(script, /async function submitQuickMapping\(\)/, 'submitQuickMapping handler should still exist');
-  assert.match(
-    script,
-    /async function submitSaveAsProject\(\)/,
-    'submitSaveAsProject handler should still exist',
-  );
 
   assert.match(
     script,
@@ -516,11 +478,6 @@ test('existing handler function names and domain/LLM call sites still exist in e
     script,
     /CaptureITDomain\.applyQuickMapping\(/,
     'submitQuickMapping should still call CaptureITDomain.applyQuickMapping',
-  );
-  assert.match(
-    script,
-    /CaptureITDomain\.saveAsProject\(/,
-    'submitSaveAsProject should still call CaptureITDomain.saveAsProject',
   );
 
   assert.match(script, /CaptureITLlm\.buildStageOne\(/);
@@ -550,7 +507,7 @@ test('handler functions remain bound to their corresponding buttons via addEvent
   );
   assert.match(
     script,
-    /elements\.requestRecommendations\.addEventListener\('click', \(\) => requestRecommendations\(\)/,
+    /elements\.requestRecommendations\.addEventListener\('click', \(\) => withBusy\(elements\.requestRecommendations, 'AI가 보는 중…', \(\) => requestRecommendations\(\)\)/,
     '#request-recommendations button should still be bound to requestRecommendations()',
   );
   assert.match(
@@ -559,16 +516,6 @@ test('handler functions remain bound to their corresponding buttons via addEvent
     'quick-mapping-dialog form submit should still be handled',
   );
   assert.match(script, /submitQuickMapping\(\)\.catch/, 'quick-mapping-dialog submit should still call submitQuickMapping()');
-  assert.match(
-    script,
-    /elements\.saveProjectDialog\.querySelector\('form'\)\.addEventListener\('submit'/,
-    'save-project-dialog form submit should still be handled',
-  );
-  assert.match(
-    script,
-    /submitSaveAsProject\(\)\.catch/,
-    'save-project-dialog submit should still call submitSaveAsProject()',
-  );
 });
 
 test('runtime message listener is guarded for local HTTP editor previews', () => {
@@ -611,9 +558,8 @@ test('editor shell uses testcase wording across feature list and card-integrated
   assert.doesNotMatch(html, /id=["']result-heading["']/);
 
   const featureCardBody = extractFunctionBody(script, 'featureCard');
-  assert.match(featureCardBody, /placeholder\s*=\s*'테스트케이스명'/, 'card testcase title input should be labelled 테스트케이스명');
-  assert.match(featureCardBody, /['"]기대 결과['"]/, 'card result fields should include 기대 결과');
-  assert.match(featureCardBody, /['"]실제 결과['"]/, 'card result fields should include 실제 결과');
+  assert.match(featureCardBody, /titleInput\.placeholder = `\$\{itemWord\(\)\} 이름`;/, 'card title placeholder follows the document type');
+  assert.match(featureCardBody, /for \(const field of docType\(\)\.fields\)/, 'card result fields come from the document type');
 });
 
 test('feature cards expose testcase title as an editable input and keep inline testcase descriptions', () => {
@@ -677,7 +623,7 @@ test('collected-evidence screen uses 수집된 증적 wording and renders test-f
   assert.match(captureNodeBody, /evidenceStepLabel\(evidence\)/, 'capture node should use the human-readable step label');
 });
 
-test('evidence review mapping controls use icons instead of text-only buttons', () => {
+test('evidence review controls use icon buttons, and the connect control shows its label', () => {
   const script = fs.readFileSync(editorScriptPath, 'utf8');
   const css = fs.readFileSync(editorCssPath, 'utf8');
   const featureCardBody = extractFunctionBody(script, 'featureCard');
@@ -687,9 +633,9 @@ test('evidence review mapping controls use icons instead of text-only buttons', 
   assert.match(script, /function\s+iconButton\s*\(/, 'iconButton helper should create labelled icon-only buttons');
   assert.match(featureCardBody, /iconButton\('위로 이동',\s*'arrow-up'/, 'feature up control should use an icon button');
   assert.match(featureCardBody, /iconButton\('아래로 이동',\s*'arrow-down'/, 'feature down control should use an icon button');
-  assert.match(featureCardBody, /iconButton\('테스트케이스 삭제',\s*'trash'/, 'feature delete control should use an icon button');
-  assert.match(mapToFeatureButtonBody, /button\.setAttribute\('aria-label',\s*'테스트케이스에 매핑'\)/, 'mapping control should keep an accessible label');
-  assert.match(mapToFeatureButtonBody, /button\.replaceChildren\(iconSvg\('link'\)\)/, 'mapping control should render an icon instead of text');
+  assert.match(featureCardBody, /iconButton\(`\$\{itemWord\(\)\} 삭제`,\s*'trash'/, 'feature delete control should use an icon button');
+  assert.match(mapToFeatureButtonBody, /button\.setAttribute\('aria-label',\s*`\$\{itemWord\(\)\}에 연결`\)/, 'mapping control should keep an accessible label');
+  assert.match(mapToFeatureButtonBody, /button\.replaceChildren\(iconSvg\('link'\), '연결'\)/, 'the only way to connect gets an icon and a visible label (big target)');
   assert.match(css, /\.icon-only/, 'icon-only controls should have shared styling');
   assert.match(css, /\.sr-only/, 'icon buttons should have a screen-reader-only utility available');
   assert.doesNotMatch(css, /\.mapping-link-layer\s*{[^}]*height:\s*100%/,
@@ -740,10 +686,10 @@ test('증적 세트는 한 줄씩 쌓이고 상세 보기는 앞뒤로 넘길 �
 // 완료 단계(#stage-completion)가 이 세 액션의 유일한 소유자가 되었고(매핑/결과 단계의 .actions
 // 블록은 제거됨), byId()가 항상 완료 단계 버튼에 바인딩되도록 각 id가 문서에서 정확히 한 번만
 // 나타나야 한다.
-test('preview-report/export-report/open-save-project ids each appear exactly once in editor.html (no duplicate DOM ids)', () => {
+test('preview-report/export-report/report-title ids each appear exactly once in editor.html (no duplicate DOM ids)', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
 
-  for (const id of ['preview-report', 'export-report', 'open-save-project']) {
+  for (const id of ['preview-report', 'export-report', 'report-title']) {
     const matches = html.match(new RegExp(`id=["']${id}["']`, 'g')) || [];
     assert.equal(matches.length, 1, `#${id} should appear exactly once in editor.html, found ${matches.length}`);
   }
@@ -755,7 +701,7 @@ test('목적은 내보내기 창에서 고른다: 문서 ZIP·미리보기·증�
 
   const dialogMatch = html.match(/<dialog id=["']export-dialog["'][\s\S]*?<\/dialog>/);
   assert.ok(dialogMatch, '#export-dialog should exist');
-  for (const id of ['export-report', 'preview-report', 'export-evidence-only', 'open-save-project', 'validation-warnings', 'template-options']) {
+  for (const id of ['export-report', 'preview-report', 'export-evidence-only', 'report-info', 'validation-warnings', 'template-options']) {
     assert.match(dialogMatch[0], new RegExp(`id=["']${id}["']`), `#${id} should live in the export dialog`);
   }
   for (const id of ['export-evidence-quick', 'export-evidence-completion']) {

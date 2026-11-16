@@ -4,6 +4,11 @@
   root.CaptureITReport = api;
 })(globalThis, function createReportApi() {
   const DEFAULT_REPORT_TITLE = 'CaptureIT QA 보고서';
+  // 문서 유형(항목 이름·칸·상태 이름). 편집기에서는 document-types.js를 먼저 불러 둔다.
+  const DocumentTypes = typeof module === 'object' && module.exports && typeof require === 'function'
+    ? require('./document-types.js')
+    : globalThis.CaptureITDocumentTypes;
+  const typeOf = (manifest) => DocumentTypes.documentType(manifest && manifest.documentType);
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -74,6 +79,8 @@
 
     return {
       schemaVersion: 1,
+      // 추가 필드라 schemaVersion은 그대로다. 예전 뷰어는 이 값을 무시하고 QA 문서로 보여 준다.
+      documentType: DocumentTypes.documentType(report.documentType).id,
       viewer: { primary: 'report.html', fallback: 'report.md' },
       report: {
         id: report.id,
@@ -122,11 +129,13 @@
   };
 
   // 상태는 칩이 아니라 기호 + 글자로 표기한다. 색은 보조라 기호와 글자만으로도 구분된다.
-  function statusMark(status) {
-    if (status === 'PASS') return '<span class="st st-pass">PASS</span>';
-    if (status === 'FAIL') return '<span class="st st-fail">FAIL</span>';
+  function statusMark(status, type = DocumentTypes.documentType('qa')) {
+    const verdict = type.verdict;
+    if (!verdict) return '';
+    if (status === 'PASS') return `<span class="st st-pass">${escapeHtml(verdict.PASS)}</span>`;
+    if (status === 'FAIL') return `<span class="st st-fail">${escapeHtml(verdict.FAIL)}</span>`;
     if (status === 'INCOMPLETE') return '<span class="st st-none">INCOMPLETE</span>';
-    return '<span class="st st-none">미판정</span>';
+    return `<span class="st st-none">${escapeHtml(verdict.none)}</span>`;
   }
 
   function dateOnly(value) {
@@ -194,9 +203,12 @@ main.doc{padding:32px 28px 48px}.masthead h1{font-size:22px}.tally dd{font-size:
 
   function renderHtml(manifest, options = {}) {
     const templateId = resolveTemplate(options.template);
+    const docType = typeOf(manifest);
+    const verdict = docType.verdict;
+    const mark = (status) => statusMark(status, docType);
     const triggerLabel = (type) => TRIGGER_LABELS[type] || '화면';
     const resultRows = manifest.features.map((feature, index) => `
-      <tr><td class="id">${index + 1}</td><td>${escapeHtml(feature.title)}</td><td>${statusMark(feature.result.status)}</td><td class="num">${feature.result.evidence.length}</td></tr>`).join('');
+      <tr><td class="id">${index + 1}</td><td>${escapeHtml(feature.title)}</td>${verdict ? `<td>${mark(feature.result.status)}</td>` : ''}<td class="num">${feature.result.evidence.length}</td></tr>`).join('');
     const overviewItems = [
       ['변경 목적', manifest.report.changePurpose],
       ['수정 내용 요약', manifest.report.changeSummary],
@@ -222,39 +234,44 @@ main.doc{padding:32px 28px 48px}.masthead h1{font-size:22px}.tally dd{font-size:
           <figcaption><b>그림 ${entryNo}-${imageIndex + 1}</b>${caption}</figcaption>
         </figure>`;
       }).join('');
-      const fields = [
-        ['검증 내용', feature.result.verification],
-        ['기대 결과', feature.result.expectedResult],
-        ['실제 결과', feature.result.actualResult],
-      ];
+      const fields = docType.fields.map((field) => [field.label, feature.result[field.key]]);
       return `
       <section class="feature entry">
-        <div class="entry-head"><h3><span class="no">${entryNo}</span>${escapeHtml(feature.title)}</h3>${statusMark(feature.result.status)}</div>
+        <div class="entry-head"><h3><span class="no">${entryNo}</span>${escapeHtml(feature.title)}</h3>${mark(feature.result.status)}</div>
         ${feature.description ? `<p>${escapeHtml(feature.description)}</p>` : ''}
-        <dl class="fields">${fields.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl>
+        ${fields.length ? `<dl class="fields">${fields.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`).join('')}</dl>` : ''}
         <div class="figs">${images || '<p class="empty">선택된 증적이 없습니다.</p>'}</div>
       </section>`;
     }).join('');
     const overall = manifest.overallStatus;
-    const verdictNote = overall === 'FAIL'
-      ? `${manifest.summary.total}건 중 ${manifest.summary.fail}건 실패`
+    const qa = docType.id === 'qa' || docType.id === 'test';
+    const verdictNote = !verdict ? '' : overall === 'FAIL'
+      ? `${manifest.summary.total}건 중 ${manifest.summary.fail}건 ${qa ? '실패' : verdict.FAIL}`
       : overall === 'PASS'
-        ? `${manifest.summary.total}건 모두 통과`
-        : `미판정 ${manifest.summary.incomplete}건`;
+        ? `${manifest.summary.total}건 모두 ${qa ? '통과' : verdict.PASS}`
+        : `${verdict.none} ${manifest.summary.incomplete}건`;
+    const tally = verdict
+      ? `<dl class="tally"><div><dt>전체</dt><dd>${manifest.summary.total}</dd></div><div><dt>${escapeHtml(verdict.PASS)}</dt><dd>${manifest.summary.pass}</dd></div><div><dt>${escapeHtml(verdict.FAIL)}</dt><dd>${manifest.summary.fail}</dd></div><div><dt>${escapeHtml(verdict.none)}</dt><dd>${manifest.summary.incomplete}</dd></div></dl>
+<p class="verdict-line">전체 결과 ${mark(overall)} — ${verdictNote}</p>`
+      : `<dl class="tally"><div><dt>${escapeHtml(docType.item)}</dt><dd>${manifest.summary.total}</dd></div></dl>`;
+    const columns = `<th>번호</th><th>${escapeHtml(docType.item)}</th>${verdict ? `<th>${escapeHtml(verdict.label)}</th>` : ''}<th class="num">증적</th>`;
+    const columnCount = verdict ? 4 : 3;
 
     return `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(manifest.report.title)}</title>
 <style>${BASE_CSS}${TEMPLATE_CSS[templateId]}</style></head><body class="tpl-${templateId}"><main class="doc">
-<header class="masthead"><div class="kicker">QA 결과 보고</div><h1>${escapeHtml(manifest.report.title)}</h1><p>${heroSubtitle}</p><p class="meta">작성 ${escapeHtml(dateOnly(manifest.report.createdAt))} · 갱신 ${escapeHtml(dateOnly(manifest.report.updatedAt))}</p></header>
-<dl class="tally"><div><dt>전체</dt><dd>${manifest.summary.total}</dd></div><div><dt>PASS</dt><dd>${manifest.summary.pass}</dd></div><div><dt>FAIL</dt><dd>${manifest.summary.fail}</dd></div><div><dt>미판정</dt><dd>${manifest.summary.incomplete}</dd></div></dl>
-<p class="verdict-line">전체 결과 ${statusMark(overall)} — ${verdictNote}</p>
+<header class="masthead"><div class="kicker">${escapeHtml(docType.reportKicker)}</div><h1>${escapeHtml(manifest.report.title)}</h1><p>${heroSubtitle}</p><p class="meta">작성 ${escapeHtml(dateOnly(manifest.report.createdAt))} · 갱신 ${escapeHtml(dateOnly(manifest.report.updatedAt))}</p></header>
+${tally}
 ${overviewHtml}
-<section class="results sec"><h2><span class="no">${resultsNo}</span>결과 목록</h2><table class="t"><thead><tr><th>번호</th><th>테스트케이스</th><th>판정</th><th class="num">증적</th></tr></thead><tbody>${resultRows || '<tr><td colspan="4">테스트케이스가 없습니다.</td></tr>'}</tbody></table></section>
-<section class="sec details"><h2><span class="no">${detailsNo}</span>테스트케이스별 상세</h2>${featureHtml || '<p class="empty">테스트케이스가 없습니다.</p>'}</section>
+<section class="results sec"><h2><span class="no">${resultsNo}</span>${verdict ? '결과 목록' : '목록'}</h2><table class="t"><thead><tr>${columns}</tr></thead><tbody>${resultRows || `<tr><td colspan="${columnCount}">${escapeHtml(docType.warningText.noItems)}</td></tr>`}</tbody></table></section>
+<section class="sec details"><h2><span class="no">${detailsNo}</span>${escapeHtml(docType.item)}별 상세</h2>${featureHtml || `<p class="empty">${escapeHtml(docType.warningText.noItems)}</p>`}</section>
 </main></body></html>`;
   }
 
   function renderMarkdown(manifest) {
+    const docType = typeOf(manifest);
+    const verdict = docType.verdict;
+    const statusText = (status) => (verdict ? (status ? DocumentTypes.verdictLabel(docType, status) : 'INCOMPLETE') : '');
     const overviewItems = [
       ['변경 목적', manifest.report.changePurpose],
       ['수정 내용 요약', manifest.report.changeSummary],
@@ -274,23 +291,28 @@ ${overviewHtml}
       ...overviewLines,
       '## 전체 요약',
       '',
-      `- 전체 결과: **${manifest.overallStatus}**`,
-      `- 전체 ${manifest.summary.total} / PASS ${manifest.summary.pass} / FAIL ${manifest.summary.fail} / 미판정 ${manifest.summary.incomplete}`,
+      ...(verdict
+        ? [
+          `- 전체 결과: **${manifest.overallStatus}**`,
+          `- 전체 ${manifest.summary.total} / ${verdict.PASS} ${manifest.summary.pass} / ${verdict.FAIL} ${manifest.summary.fail} / ${verdict.none} ${manifest.summary.incomplete}`,
+        ]
+        : [`- ${docType.item} ${manifest.summary.total}개`]),
       '',
-      '## 결과 목록',
+      `## ${verdict ? '결과 목록' : '목록'}`,
       '',
-      '| ID | 테스트케이스 | 판정 | 증적 |',
-      '|---|---|---|---:|',
-      ...manifest.features.map((feature) => `| ${escapeMarkdown(feature.id)} | ${escapeMarkdown(feature.title)} | ${feature.result.status || 'INCOMPLETE'} | ${feature.result.evidence.length} |`),
+      verdict ? `| ID | ${docType.item} | ${verdict.label} | 증적 |` : `| ID | ${docType.item} | 증적 |`,
+      verdict ? '|---|---|---|---:|' : '|---|---|---:|',
+      ...manifest.features.map((feature) => (verdict
+        ? `| ${escapeMarkdown(feature.id)} | ${escapeMarkdown(feature.title)} | ${statusText(feature.result.status)} | ${feature.result.evidence.length} |`
+        : `| ${escapeMarkdown(feature.id)} | ${escapeMarkdown(feature.title)} | ${feature.result.evidence.length} |`)),
       '',
     ];
     for (const feature of manifest.features) {
       lines.push(`## ${escapeMarkdown(feature.id)} · ${escapeMarkdown(feature.title)}`, '');
       lines.push(escapeMarkdown(feature.description), '');
-      lines.push(`- 판정: **${feature.result.status || 'INCOMPLETE'}**`);
-      lines.push(`- 검증 내용: ${escapeMarkdown(feature.result.verification)}`);
-      lines.push(`- 기대 결과: ${escapeMarkdown(feature.result.expectedResult)}`);
-      lines.push(`- 실제 결과: ${escapeMarkdown(feature.result.actualResult)}`, '');
+      if (verdict) lines.push(`- ${verdict.label}: **${statusText(feature.result.status)}**`);
+      for (const field of docType.fields) lines.push(`- ${field.label}: ${escapeMarkdown(feature.result[field.key])}`);
+      lines.push('');
       feature.result.evidence.forEach((item, index) => {
         lines.push(`### 증적 ${index + 1}`, '');
         lines.push(`![${escapeMarkdown(item.description || item.pageTitle || feature.title)}](${item.file})`, '');

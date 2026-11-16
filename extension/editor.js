@@ -54,8 +54,8 @@
     noFeature: byId('no-feature'),
     featureDetailHeading: byId('feature-detail-heading'),
     openLlmSettings: byId('open-llm-settings'),
-    openSaveProject: byId('open-save-project'),
-    openSaveProjectMenu: byId('open-save-project-menu'),
+    openReportInfo: byId('open-report-info'),
+    reportInfo: byId('report-info'),
     openMoreMenu: byId('open-more-menu'),
     moreMenu: byId('more-menu'),
     headerEvidenceCount: byId('header-evidence-count'),
@@ -84,8 +84,6 @@
     approveDraftSuggestion: byId('approve-draft-suggestion'),
     requestRecommendations: byId('request-recommendations'),
     requestTestCaseDescriptionButton: byId('request-test-case-description'),
-    cancelSaveProject: byId('cancel-save-project'),
-    saveProjectDialog: byId('save-project-dialog'),
     saveStatus: byId('save-status'),
     sessionStatus: byId('session-status'),
     showDownloadFolder: byId('show-download-folder'),
@@ -105,6 +103,21 @@
     recordTarget: byId('record-target'),
     captureTarget: byId('capture-target'),
     linkTarget: byId('link-target'),
+    stopRecordingBar: byId('stop-recording-bar'),
+    statusBar: document.querySelector('.status-bar'),
+    captureSettingsDialog: byId('capture-settings-dialog'),
+    openCaptureSettings: byId('open-capture-settings'),
+    closeCaptureSettings: byId('close-capture-settings'),
+    pointerEnabled: byId('pointer-enabled'),
+    pointerOptions: byId('pointer-options'),
+    pointerShapes: byId('pointer-shapes'),
+    pointerColors: byId('pointer-colors'),
+    pointerSizes: byId('pointer-sizes'),
+    pointerPreview: byId('pointer-preview'),
+    reportType: byId('report-type'),
+    documentTypeOptions: byId('document-type-options'),
+    paneLabelFeatures: byId('pane-label-features'),
+    featureListHeading: byId('feature-list-heading'),
     storageDetailDialog: byId('storage-detail-dialog'),
     storageEvidenceCount: byId('storage-evidence-count'),
     storageLastExportName: byId('storage-last-export-name'),
@@ -218,7 +231,8 @@
   // AI 연결이 확인된 뒤에만(연결 테스트 성공 또는 실제 호출 성공) 자동 AI 기능을 돌린다.
   // 확인 전에 자동으로 부르면 사내망 밖이나 설정 전에는 매핑할 때마다 빨간 오류가 떴다.
   let llmReady = false;
-  const LLM_TIMEOUT_MS = 60000;
+  // 이미지를 보고 생각한 뒤 답하는 모델은 1분을 넘기기도 한다.
+  const LLM_TIMEOUT_MS = 90000;
   // 붙여넣기·파일 불러오기 전용 수집 묶음. 녹화 세션과 순번이 섞이지 않도록 따로 관리하고,
   // 마지막 입력 후 IMPORT_SESSION_GAP_MS 안에 이어 넣으면 같은 묶음으로 잇는다.
   let importSession = null;
@@ -267,19 +281,62 @@
     },
   };
 
+  // 문서 유형(목적)에 따른 이름. 보고서마다 report.documentType에 저장하고, 새 보고서는 마지막에 고른 유형을 따른다.
+  let preferredDocumentType = null;
+  function docType() {
+    return CaptureITDocumentTypes.documentType(report && report.documentType || preferredDocumentType);
+  }
+  // itemWord() → '테스트케이스', itemWord('을/를') → '확인 포인트를', itemWord('이/가') → '장면이'
+  function itemWord(pair) {
+    const item = docType().item;
+    return pair ? CaptureITDocumentTypes.josa(item, pair) : item;
+  }
+  function untitledItem() {
+    return `제목 없는 ${docType().item}`;
+  }
+
   function currentFeature() {
     return editorState.features.find((feature) => feature.id === currentFeatureId) || null;
   }
 
-  function createInitialReport(title = '새 QA 보고서') {
+  function createInitialReport(title = `새 ${docType().name}`) {
     const created = CaptureITDomain.createReport(title);
-    created.features.push(CaptureITDomain.createFeature('새 테스트케이스'));
+    created.documentType = docType().id;
+    created.features.push(CaptureITDomain.createFeature(`새 ${itemWord()}`));
     return created;
   }
 
-  function setMessage(message, error = false) {
-    elements.editorMessage.textContent = message;
+  // action: { label, run } — 끝난 일 바로 다음에 할 만한 행동(예: 저장한 ZIP을 폴더에서 보기)을 같은 줄에 붙인다.
+  function setMessage(message, error = false, action = null) {
+    elements.editorMessage.replaceChildren(message);
     elements.editorMessage.classList.toggle('message-error', error);
+    if (action) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'text-button message-action';
+      button.textContent = action.label;
+      button.addEventListener('click', () => Promise.resolve(action.run()).catch((runError) => setMessage(runError.message, true)));
+      elements.editorMessage.append(' ', button);
+    }
+  }
+
+  // 시간이 걸리는 버튼은 누르자마자 "…중"으로 바꾸고 끝날 때까지 다시 못 누르게 한다(0.4초 안에 반응).
+  async function withBusy(button, busyLabel, task) {
+    if (!button || button.dataset.busy) return undefined;
+    const original = [...button.childNodes];
+    button.dataset.busy = 'true';
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = busyLabel;
+    try {
+      return await task();
+    } finally {
+      delete button.dataset.busy;
+      button.removeAttribute('aria-busy');
+      button.replaceChildren(...original);
+      button.disabled = false;
+      renderExportEvidenceButtons();
+    }
   }
 
   function renderReportSelector() {
@@ -332,11 +389,15 @@
     elements.sessionStatus.className = `rec-dot ${active ? 'is-on' : starting ? 'is-starting' : ''}`.trim();
     elements.captureFirstHeading.textContent = active ? '녹화 중' : starting ? '녹화를 시작하고 있습니다…' : '테스트 화면을 녹화하세요';
     elements.captureModeHint.textContent = active ? captureHintText.recording : captureHintText.idle;
-    elements.toggleSession.textContent = starting ? '시작 중…' : active ? '녹화 종료' : '녹화 시작';
+    elements.toggleSession.replaceChildren();
+    if (active) elements.toggleSession.append(Object.assign(document.createElement('span'), { className: 'stop-glyph' }));
+    elements.toggleSession.append(starting ? '시작 중…' : active ? '녹화 종료' : '녹화 시작');
     elements.toggleSession.disabled = starting;
     elements.toggleSession.classList.toggle('is-recording', active);
-    elements.toggleSession.classList.toggle('button-quiet', active);
-    elements.toggleSession.classList.toggle('button-primary', !active);
+    // 아래 상태 줄의 종료 버튼: 수집 줄이 스크롤로 가려져도 늘 보인다.
+    elements.stopRecordingBar.hidden = !active;
+    elements.statusBar.classList.toggle('is-recording', active);
+    renderPrimaryAction();
     elements.captureMode.disabled = starting || active;
     if (active) elements.captureMode.value = session.mode;
     renderRecordingSummary(active);
@@ -385,7 +446,7 @@
   }
 
   function saveFeatureTitle(feature, value) {
-    feature.title = value.trim() || '제목 없는 테스트케이스';
+    feature.title = value.trim() || untitledItem();
     renderFeatures();
     queueSave();
   }
@@ -423,29 +484,36 @@
     renderWorkspace();
   }
 
+  // 상태 이름은 문서 유형을 따른다(QA: PASS/FAIL/미판정, PoC: 확인됨/안 됨/미정). 장면처럼 상태가 없는 유형은 그리지 않는다.
+  function verdictText(value) {
+    return CaptureITDocumentTypes.verdictLabel(docType(), value);
+  }
+
   function statusMark(feature) {
+    if (!docType().verdict) return null;
     const status = feature.result.status ?? null;
     const verdict = VERDICTS.find((item) => item.value === status) || VERDICTS[2];
     const mark = document.createElement('span');
     mark.className = `st ${status === 'PASS' ? 'st-pass' : status === 'FAIL' ? 'st-fail' : 'st-none'}`;
-    mark.textContent = `${verdict.glyph} ${verdict.label}`;
+    mark.textContent = `${verdict.glyph} ${verdictText(verdict.value)}`;
     return mark;
   }
 
   function verdictControl(feature) {
+    if (!docType().verdict) return null;
     const status = feature.result.status ?? null;
     const opinion = feature.aiOpinion && feature.aiOpinion.status;
     const group = document.createElement('div');
     group.className = 'verdict';
     group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', '판정');
+    group.setAttribute('aria-label', docType().verdict.label);
     for (const verdict of VERDICTS) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `verdict-option ${verdict.className}`;
-      button.textContent = `${verdict.glyph} ${verdict.label}`;
+      button.textContent = `${verdict.glyph} ${verdictText(verdict.value)}`;
       button.setAttribute('aria-pressed', String(status === verdict.value));
-      if (opinion && opinion === verdict.value) button.title = `AI 의견: ${opinion}${feature.aiOpinion.basis ? ` (${feature.aiOpinion.basis})` : ''} · 참고용`;
+      if (opinion && opinion === verdict.value) button.title = `AI 의견: ${verdictText(opinion)}${feature.aiOpinion.basis ? ` (${feature.aiOpinion.basis})` : ''} · 참고용`;
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         setVerdict(feature, verdict.value).catch((error) => setMessage(`판정 변경 실패: ${error.message}`, true));
@@ -513,7 +581,7 @@
     titleInput.className = 'feature-title-input';
     titleInput.dataset.featureField = 'title';
     titleInput.value = feature.title || '';
-    titleInput.placeholder = '테스트케이스명';
+    titleInput.placeholder = `${itemWord()} 이름`;
     titleInput.addEventListener('click', (event) => event.stopPropagation());
     titleInput.addEventListener('change', () => saveFeatureTitle(feature, titleInput.value));
     titleInput.addEventListener('keydown', (event) => {
@@ -531,7 +599,7 @@
       targetMark.textContent = '● 수집 대상';
       header.append(targetMark);
     }
-    header.append(evidenceCount, statusMark(feature), drawerToggle);
+    header.append(...[evidenceCount, statusMark(feature), drawerToggle].filter(Boolean));
 
     // Auto_AI_Pipeline 진행 체크리스트: 이 feature에 대해 파이프라인이 실행 중이거나 방금
     // 끝난 경우에만 렌더링한다(finishAiPipeline이 일정 시간 후 aiPipelineStatus를 지운다).
@@ -561,11 +629,11 @@
       }, false, isTarget ? 'is-active' : ''),
       iconButton('위로 이동', 'arrow-up', () => moveFeature(feature.id, -1), index === 0),
       iconButton('아래로 이동', 'arrow-down', () => moveFeature(feature.id, 1), index === editorState.features.length - 1),
-      iconButton('테스트케이스 삭제', 'trash', () => removeFeature(feature.id), false, 'danger'),
+      iconButton(`${itemWord()} 삭제`, 'trash', () => removeFeature(feature.id), false, 'danger'),
     );
     const footer = document.createElement('div');
     footer.className = 'feature-footer';
-    footer.append(verdictControl(feature), controls);
+    footer.append(...[verdictControl(feature), controls].filter(Boolean));
     // 설명 영역은 클릭하면(텍스트 입력 전이라도) 카드를 선택시켜 결과 입력 영역을 확장한다 -
     // 다만 이미 선택된 카드라면 선택을 건드리지 않아 텍스트 입력/커서 이동이 방해받지 않는다
     // (selectFeature()는 토글이라 이미 선택된 상태에서 호출하면 선택이 풀려버리므로 그 경우엔 호출하지 않는다).
@@ -579,12 +647,12 @@
     // 기대 결과/실제 결과는 필수 항목이 아니므로 이 마커를 붙이지 않는다.
     const descriptionLabel = document.createElement('span');
     descriptionLabel.className = 'feature-field-label required';
-    descriptionLabel.textContent = '테스트케이스 설명';
+    descriptionLabel.textContent = docType().descriptionLabel;
     const description = document.createElement('textarea');
     description.className = 'feature-description-edit';
     description.dataset.featureField = 'description';
     description.rows = 2;
-    description.placeholder = '테스트케이스 설명';
+    description.placeholder = docType().descriptionLabel;
     description.value = feature.description || '';
     description.addEventListener('change', () => saveFeatureDescription(feature, description.value));
     descriptionField.append(descriptionLabel, description);
@@ -595,48 +663,31 @@
     // 트랜지션은 브라우저 지원이 일정치 않아 애니메이션이 재생되지 않는 경우가 있어 사용하지 않는다).
     const resultFields = document.createElement('div');
     resultFields.className = 'feature-result-fields';
-    // 검증 내용은 보고서 표에 들어가는데 카드에 입력란이 없어 내보내기 때마다 "비어 있음" 경고만 떴다.
-    const verificationField = document.createElement('label');
-    verificationField.className = 'wide';
-    verificationField.append('검증 내용');
-    const verificationInput = document.createElement('textarea');
-    verificationInput.dataset.featureField = 'verification';
-    verificationInput.rows = 2;
-    verificationInput.placeholder = '무엇을 확인했는지';
-    verificationInput.value = feature.result.verification || '';
-    verificationInput.addEventListener('click', (event) => event.stopPropagation());
-    verificationInput.addEventListener('change', () => {
-      feature.result.verification = verificationInput.value;
-      queueSave();
-    });
-    verificationField.append(verificationInput);
-    const expectedField = document.createElement('label');
-    expectedField.className = 'wide';
-    expectedField.append('기대 결과');
-    const expectedInput = document.createElement('textarea');
-    expectedInput.dataset.featureField = 'expectedResult';
-    expectedInput.rows = 2;
-    expectedInput.value = feature.result.expectedResult || '';
-    expectedInput.addEventListener('click', (event) => event.stopPropagation());
-    expectedInput.addEventListener('change', () => saveFeatureExpectedResult(feature, expectedInput.value));
-    expectedField.append(expectedInput);
-    const actualField = document.createElement('label');
-    actualField.className = 'wide';
-    actualField.append('실제 결과');
-    const actualInput = document.createElement('textarea');
-    actualInput.dataset.featureField = 'actualResult';
-    actualInput.rows = 2;
-    actualInput.value = feature.result.actualResult || '';
-    actualInput.addEventListener('click', (event) => event.stopPropagation());
-    actualInput.addEventListener('change', () => saveFeatureActualResult(feature, actualInput.value));
-    actualField.append(actualInput);
-    resultFields.append(verificationField, expectedField, actualField);
+    // 칸은 문서 유형이 정한다(QA: 검증 내용·기대·실제 결과, PoC: 확인 결과·질문·후속, 장면: 없음).
+    // 유형에 없는 칸의 값은 지우지 않고 화면에서만 숨긴다.
+    for (const field of docType().fields) {
+      const fieldLabel = document.createElement('label');
+      fieldLabel.className = 'wide';
+      fieldLabel.append(field.label);
+      const input = document.createElement('textarea');
+      input.dataset.featureField = field.key;
+      input.rows = 2;
+      input.placeholder = field.placeholder || '';
+      input.value = feature.result[field.key] || '';
+      input.addEventListener('click', (event) => event.stopPropagation());
+      input.addEventListener('change', () => {
+        feature.result[field.key] = input.value;
+        queueSave();
+      });
+      fieldLabel.append(input);
+      resultFields.append(fieldLabel);
+    }
 
     card.append(header);
-    if (feature.aiOpinion && feature.aiOpinion.status) {
+    if (docType().verdict && feature.aiOpinion && feature.aiOpinion.status) {
       const opinionHint = document.createElement('p');
       opinionHint.className = 'ai-opinion-hint';
-      opinionHint.textContent = `AI 의견: ${feature.aiOpinion.status}${feature.aiOpinion.basis ? ` — ${feature.aiOpinion.basis}` : ''} (참고용, 판정은 직접 고릅니다)`;
+      opinionHint.textContent = `AI 의견: ${verdictText(feature.aiOpinion.status)}${feature.aiOpinion.basis ? ` — ${feature.aiOpinion.basis}` : ''} (참고용, 판정은 직접 고릅니다)`;
       card.append(opinionHint);
     }
     if (pipelineChecklist) card.append(pipelineChecklist);
@@ -741,12 +792,12 @@
       setFeatureDrawerOpen(false);
       return;
     }
-    elements.featureDetailHeading.textContent = feature.title || '제목 없는 테스트케이스';
+    elements.featureDetailHeading.textContent = feature.title || untitledItem();
     renderRecommendations();
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = '증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요. 이 테스트케이스가 골라져 있으면 바로 연결됩니다.';
+      elements.featureMappingGuidance.textContent = `증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요. 이 ${itemWord('이/가')} 골라져 있으면 바로 연결됩니다.`;
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -893,14 +944,65 @@
   // 드래그앤드롭과 동일한 mapEvidenceIds(→ CaptureITDomain.mapEvidenceBatch)를 호출해 "동일한 결과"를 보장한다(요구사항 3.5, 3.6).
   // HTML <button> 엘리먼트는 Tab으로 포커스되고 Enter/Space로 클릭되는 표준 접근성 동작을 기본 제공하므로
   // 별도의 keydown 핸들러 없이도 키보드 흐름을 만족한다.
+  // ⋯ 버튼과 그 아래 펼쳐지는 작은 메뉴. 메뉴 밖을 누르거나 Esc를 누르면 닫힌다.
+  function overflowMenu(label, items) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mini-menu-wrap';
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'icon-only';
+    trigger.setAttribute('aria-label', label);
+    trigger.setAttribute('aria-haspopup', 'true');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.textContent = '⋯';
+    const menu = document.createElement('div');
+    menu.className = 'mini-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    const close = () => {
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const onOutside = (event) => { if (!wrap.contains(event.target)) close(); };
+    for (const item of items) {
+      const entry = document.createElement('button');
+      entry.type = 'button';
+      entry.className = `more-menu-item${item.danger ? ' danger' : ''}`;
+      entry.setAttribute('role', 'menuitem');
+      entry.textContent = item.label;
+      entry.disabled = Boolean(item.disabled);
+      entry.addEventListener('click', (event) => {
+        event.stopPropagation();
+        close();
+        item.run();
+      });
+      menu.append(entry);
+    }
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const opening = menu.hidden;
+      if (!opening) return close();
+      menu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', onOutside, true);
+      return undefined;
+    });
+    menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { close(); trigger.focus(); } });
+    wrap.append(trigger, menu);
+    return wrap;
+  }
+
   function mapToFeatureButton(evidenceIds) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'button button-secondary map-to-feature-button icon-action-button';
-    button.title = '테스트케이스에 매핑';
-    button.setAttribute('aria-label', '테스트케이스에 매핑');
-    button.replaceChildren(iconSvg('link'));
-    if (currentFeature()) button.title = `'${currentFeature().title}'에 연결`;
+    // 끌어다 놓기가 막힌 환경에서 연결은 이 버튼뿐이라, 아이콘만 두지 않고 "연결" 글자를 붙여 크게 둔다.
+    button.className = 'button button-quiet map-to-feature-button';
+    button.setAttribute('aria-label', `${itemWord()}에 연결`);
+    button.replaceChildren(iconSvg('link'), '연결');
+    button.title = currentFeature()
+      ? `'${currentFeature().title}'에 연결합니다`
+      : editorState.features.length > 1 ? `누른 뒤 연결할 ${itemWord('을/를')} 고릅니다` : `${itemWord()}에 연결합니다`;
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
       try {
@@ -924,7 +1026,7 @@
   // 제출 처리는 15.2에서 CaptureITDomain.applyQuickMapping과 연동한다.
   function openQuickMappingDialog(evidenceIds) {
     if (editorState.features.length === 0) {
-      setMessage('먼저 테스트케이스를 추가하십시오.', true);
+      setMessage(`먼저 ${itemWord('을/를')} 추가하세요.`, true);
       return;
     }
     quickMappingEvidenceIds = evidenceIds;
@@ -932,7 +1034,7 @@
     const options = editorState.features.map((item) => {
       const option = document.createElement('option');
       option.value = item.id;
-      option.textContent = item.title || '제목 없는 테스트케이스';
+      option.textContent = item.title || untitledItem();
       option.selected = Boolean(feature && item.id === feature.id);
       return option;
     });
@@ -959,7 +1061,7 @@
   function mappedFeatureTitle(evidence) {
     if (!evidence.featureSpecId) return '';
     const feature = editorState.features.find((item) => item.id === evidence.featureSpecId);
-    return feature ? feature.title || '제목 없는 테스트케이스' : '매핑된 테스트케이스';
+    return feature ? feature.title || untitledItem() : `연결된 ${itemWord()}`;
   }
 
   // 증적을 기술 이벤트(triggerType 원문)가 아니라 사용자의 테스트 흐름 단계처럼 보여주기 위한
@@ -1103,15 +1205,14 @@
 
     const headerActions = document.createElement('div');
     headerActions.className = 'capture-graph-header-actions';
+    // 자주 쓰는 "연결"만 밖에 두고, 가끔 쓰는 것(AI 제목, 연결 해제, 삭제)은 ⋯ 메뉴에 넣어 고를 것을 줄인다.
     headerActions.append(
       mapToFeatureButton(group.evidenceIds),
-      // LLM 추천 세트 제목: 테스트케이스 선택(currentFeature())과 무관하게 항상 사용 가능해야 한다 -
-      // 제목 추천은 evidence 세트 단위 작업이며 매핑 여부에 의존하지 않는다.
-      iconButton('제목 추천받기', 'sparkle', () => {
-        requestEvidenceGroupTitleSuggestion(group).catch((error) => setMessage(`제목 추천 실패: ${error.message}`, true));
-      }),
-      iconButton('세트 연결 해제', 'link-off', () => unmapEvidenceGroup(group.evidenceIds), mappedFeatureIds.length === 0),
-      iconButton('세트 삭제', 'trash', () => removeEvidenceGroup(group.evidenceIds), false, 'danger'),
+      overflowMenu('세트 메뉴', [
+        { label: 'AI로 제목 짓기', run: () => requestEvidenceGroupTitleSuggestion(group).catch((error) => setMessage(`제목 추천 실패: ${error.message}`, true)) },
+        { label: '세트 연결 해제', run: () => unmapEvidenceGroup(group.evidenceIds), disabled: mappedFeatureIds.length === 0 },
+        { label: '세트 삭제', run: () => removeEvidenceGroup(group.evidenceIds), danger: true },
+      ]),
     );
     header.append(titleInput, headerActions);
 
@@ -1204,7 +1305,7 @@
       `주소: ${summary.pageUrl || '-'}`,
       `동작: ${evidenceStepLabel(evidence)}${summary.targetText ? ` (${summary.targetText})` : ''}`,
       `수집 시각: ${formatTimestamp(summary.capturedAt)}`,
-      `연결된 테스트케이스: ${mappedFeatureTitle(evidence) || '없음'}`,
+      `연결된 ${itemWord()}: ${mappedFeatureTitle(evidence) || '없음'}`,
       mergedCount ? `같은 화면 합침: ${mergedCount}번` : '',
     ].filter(Boolean).join('\n');
     elements.previousEvidenceDetail.disabled = evidenceDetailIds.length <= 1 || evidenceDetailIndex === 0;
@@ -1296,11 +1397,11 @@
     elements.linkTarget.hidden = editorState.evidence.length === 0;
     if (feature) {
       const index = editorState.features.indexOf(feature) + 1;
-      elements.linkTarget.replaceChildren('연결 버튼을 누르면 → ', Object.assign(document.createElement('strong'), { textContent: `${index}. ${feature.title || '제목 없는 테스트케이스'}` }));
+      elements.linkTarget.replaceChildren('연결 버튼을 누르면 → ', Object.assign(document.createElement('strong'), { textContent: `${index}. ${feature.title || untitledItem()}` }));
     } else {
       elements.linkTarget.textContent = editorState.features.length === 0
-        ? '연결 버튼을 누르면 테스트케이스를 새로 만들어 연결합니다.'
-        : '연결 버튼을 누른 뒤 연결할 테스트케이스를 고르세요.';
+        ? `연결 버튼을 누르면 ${itemWord('을/를')} 새로 만들어 연결합니다.`
+        : `연결 버튼을 누른 뒤 연결할 ${itemWord('을/를')} 고르세요.`;
     }
   }
 
@@ -1404,20 +1505,23 @@
   }
 
   // 내보내기 창의 "남은 것" 목록. 테스트케이스마다 한 줄로 묶고, 누르면 창을 닫고 그 테스트케이스를 고른다.
-  const WARNING_SHORT = {
-    UNSET_VERDICT: '판정',
-    NO_EVIDENCE: '증적',
-    MISSING_VERIFICATION: '검증 내용',
-    MISSING_EXPECTED_RESULT: '기대 결과',
-    MISSING_ACTUAL_RESULT: '실제 결과',
-  };
+
 
   function renderWarnings() {
     if (!report) {
       elements.validationWarnings.replaceChildren();
       return;
     }
-    const warnings = CaptureITDomain.validationWarnings({ ...report, features: editorState.features });
+    const type = docType();
+    const fieldLabels = Object.fromEntries(type.fields.map((field) => [field.key, field.label]));
+    const shortLabel = {
+      UNSET_VERDICT: type.verdict ? type.verdict.label : '',
+      NO_EVIDENCE: '증적',
+      MISSING_VERIFICATION: fieldLabels.verification,
+      MISSING_EXPECTED_RESULT: fieldLabels.expectedResult,
+      MISSING_ACTUAL_RESULT: fieldLabels.actualResult,
+    };
+    const warnings = CaptureITDomain.validationWarnings({ ...report, features: editorState.features }, type);
     const items = [];
     const byFeature = new Map();
     for (const warning of warnings) {
@@ -1431,9 +1535,9 @@
     editorState.features.forEach((feature, index) => {
       const codes = byFeature.get(feature.id);
       if (!codes) return;
-      const missing = codes.map((code) => WARNING_SHORT[code]).filter(Boolean);
-      const failNote = codes.includes('FAIL_WITHOUT_ACTUAL_RESULT') ? ' (FAIL이면 실제 결과가 필요합니다)' : '';
-      items.push({ featureId: feature.id, text: `${index + 1}. ${feature.title || '제목 없는 테스트케이스'} — 빠짐: ${missing.join(', ')}${failNote}` });
+      const missing = codes.map((code) => shortLabel[code]).filter(Boolean);
+      const failNote = codes.includes('FAIL_WITHOUT_ACTUAL_RESULT') ? ` (${type.verdict.FAIL}이면 ${fieldLabels.actualResult}${CaptureITDocumentTypes.josa(fieldLabels.actualResult, '이/가').slice(fieldLabels.actualResult.length)} 필요합니다)` : '';
+      items.push({ featureId: feature.id, text: `${index + 1}. ${feature.title || untitledItem()} — 빠짐: ${missing.join(', ')}${failNote}` });
     });
     elements.validationWarnings.replaceChildren(...items.map((entry) => {
       const item = document.createElement('li');
@@ -1589,14 +1693,15 @@
     const evidenceCount = editorState.evidence.length;
     const featureCount = editorState.features.length;
     const unmappedFeatures = editorState.features.filter((feature) => feature.result.evidenceIds.length === 0).length;
-    const unjudged = editorState.features.filter((feature) => !feature.result.status).length;
+    const verdict = docType().verdict;
+    const unjudged = verdict ? editorState.features.filter((feature) => !feature.result.status).length : 0;
     const recording = Boolean(session && session.active);
     if (recording) messages.push('테스트 화면을 평소처럼 조작하세요. 주요 화면이 자동으로 수집됩니다.');
     else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
-    else if (featureCount === 0) messages.push('증적 세트의 연결 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다.');
-    else if (unmappedFeatures > 0) messages.push(`증적이 없는 테스트케이스가 ${unmappedFeatures}개 있습니다. 테스트케이스를 고른 뒤 증적의 연결 버튼을 누르세요.`);
-    else if (unjudged > 0) messages.push(`판정하지 않은 테스트케이스가 ${unjudged}개 있습니다.`);
-    else messages.push('모두 판정했습니다. 내보내기를 누르세요.');
+    else if (featureCount === 0) messages.push(`증적 세트의 연결 버튼을 누르면 ${itemWord('이/가')} 만들어지며 연결됩니다.`);
+    else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. ${itemWord('을/를')} 고른 뒤 증적의 연결 버튼을 누르세요.`);
+    else if (unjudged > 0) messages.push(`${verdict.none} 상태인 ${itemWord('이/가')} ${unjudged}개 있습니다.`);
+    else messages.push(verdict ? `모두 ${verdict.label}했습니다. 내보내기를 누르세요.` : '내보내기를 누르세요.');
     if (elements.reportDraftSuggestionDialog.open) {
       messages.push('제안된 보고서명과 형상·체크아웃 개요는 반영을 눌러야 저장됩니다.');
     }
@@ -1624,13 +1729,25 @@
     } else {
       const pass = Object.assign(document.createElement('span'), { className: 'st-pass', textContent: `✓${summary.pass}` });
       const fail = Object.assign(document.createElement('span'), { className: 'st-fail', textContent: `✕${summary.fail}` });
-      elements.readinessSummary.append(`테스트케이스 ${summary.features} · `, pass, ' ', fail, ` ○${summary.na}`);
+      if (docType().verdict) elements.readinessSummary.append(`${itemWord()} ${summary.features} · `, pass, ' ', fail, ` ○${summary.na}`);
+      else elements.readinessSummary.textContent = `${itemWord()} ${summary.features} · 증적 ${summary.total}`;
     }
     elements.openExport.disabled = summary.total === 0 && summary.features === 0;
+    renderPrimaryAction();
     elements.paneCountInbox.textContent = String(summary.total);
     elements.paneCountFeatures.textContent = String(summary.features);
     elements.headerEvidenceCount.textContent = summary.total ? String(summary.total) : '';
     elements.featureCount.textContent = summary.features ? String(summary.features) : '';
+  }
+
+  // 한 화면에 파란 주 버튼은 하나만: 증적이 없으면 "녹화 시작", 모였으면 "내보내기". 녹화 중에는 빨간 "녹화 종료".
+  function renderPrimaryAction() {
+    const active = Boolean(session && session.active);
+    const hasWork = editorState.evidence.length > 0;
+    elements.toggleSession.classList.toggle('button-primary', !active && !hasWork);
+    elements.toggleSession.classList.toggle('button-quiet', !active && hasWork);
+    elements.openExport.classList.toggle('button-primary', !active && hasWork);
+    elements.openExport.classList.toggle('button-quiet', active || !hasWork);
   }
 
   function isNarrow() {
@@ -1659,17 +1776,18 @@
     elements.featureList.classList.toggle('picking', Boolean(pendingMapEvidenceIds));
     if (pendingMapEvidenceIds) {
       setNarrowPane('features');
-      setMessage(`증적 ${pendingMapEvidenceIds.length}장을 연결할 테스트케이스를 누르세요. 취소하려면 Esc.`);
+      setMessage(`증적 ${pendingMapEvidenceIds.length}장을 연결할 ${itemWord('을/를')} 누르세요. 취소하려면 Esc.`);
     }
   }
 
   function openExportDialog() {
+    renderReportFields();
     renderWarnings();
     renderCompletionSummary();
     renderTemplatePicker();
     renderExportEvidenceButtons();
     elements.exportReport.disabled = editorState.features.length === 0;
-    elements.exportReport.title = editorState.features.length === 0 ? '테스트케이스가 없으면 증적만 ZIP으로 받으세요' : '';
+    elements.exportReport.title = editorState.features.length === 0 ? `${itemWord('이/가')} 없으면 증적만 ZIP으로 받으세요` : '';
     if (!elements.exportDialog.open) elements.exportDialog.showModal();
   }
 
@@ -1698,7 +1816,7 @@
     clear.className = 'text-button';
     clear.textContent = '해제';
     clear.addEventListener('click', () => setCaptureTarget(null).catch((error) => setMessage(error.message, true)));
-    elements.captureTarget.replaceChildren('새 증적 연결 대상: ', Object.assign(document.createElement('strong'), { textContent: feature.title || '제목 없는 테스트케이스' }), clear);
+    elements.captureTarget.replaceChildren('새 증적 연결 대상: ', Object.assign(document.createElement('strong'), { textContent: feature.title || untitledItem() }), clear);
   }
 
   // 새로 들어온(연결 안 된) 증적을 수집 대상 테스트케이스에 붙인다. AI 자동 작성은 돌리지 않는다.
@@ -1745,7 +1863,118 @@
     }
   }
 
+  // 문서 유형에 따라 바뀌는 화면 이름들.
+  function renderTerms() {
+    const type = docType();
+    elements.reportType.textContent = type.name;
+    elements.featureListHeading.textContent = type.item;
+    elements.paneLabelFeatures.textContent = type.item;
+    elements.addFeature.setAttribute('aria-label', `${type.item} 추가`);
+    elements.noFeature.textContent = `${type.warningText.noItems} 증적의 연결 버튼을 누르면 새로 만들어 연결합니다.`;
+    byId('summary-label-features').textContent = type.item;
+    const summary = elements.completionSummaryFeatures.closest('dl');
+    summary.classList.toggle('no-verdict', !type.verdict);
+    if (type.verdict) {
+      byId('summary-label-pass').textContent = `✓ ${type.verdict.PASS}`;
+      byId('summary-label-fail').textContent = `✕ ${type.verdict.FAIL}`;
+      byId('summary-label-na').textContent = `○ ${type.verdict.none}`;
+    }
+    renderDocumentTypePicker();
+  }
+
+  function renderDocumentTypePicker() {
+    const selected = docType().id;
+    elements.documentTypeOptions.replaceChildren(...CaptureITDocumentTypes.DOCUMENT_TYPES.map((type) => {
+      const option = document.createElement('label');
+      option.className = 'type-option';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'document-type';
+      input.value = type.id;
+      input.checked = type.id === selected;
+      input.addEventListener('change', () => {
+        if (input.checked) setDocumentType(type.id).catch((error) => setMessage(error.message, true));
+      });
+      const name = Object.assign(document.createElement('span'), { className: 'type-option-name', textContent: type.name });
+      const summary = Object.assign(document.createElement('span'), { className: 'type-option-summary', textContent: type.summary });
+      option.append(input, name, summary);
+      return option;
+    }));
+  }
+
+  async function setDocumentType(typeId) {
+    preferredDocumentType = typeId;
+    await extensionStorage.set({ preferredDocumentType: typeId });
+    await ensureDraftReportForCapture();
+    report.documentType = typeId;
+    await saveReport();
+    renderAll();
+    setMessage(`문서 유형을 '${docType().name}'(으)로 바꿨습니다. 적어 둔 내용은 그대로입니다.`);
+  }
+
+  // 수집 설정: 클릭한 곳 표시. 실제로 그리는 쪽(background.js)과 같은 코드로 미리보기를 그린다.
+  let pointerSettings = CaptureITPointerMarker.normalizeSettings(null);
+
+  function choiceGroup(container, name, items, selected, renderExtra, onPick) {
+    container.replaceChildren(...items.map((item) => {
+      const label = document.createElement('label');
+      label.className = 'choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = item.id;
+      input.checked = item.id === selected;
+      input.addEventListener('change', () => { if (input.checked) onPick(item.id); });
+      label.append(input);
+      const extra = renderExtra(item);
+      if (extra) label.append(extra);
+      label.append(item.name);
+      return label;
+    }));
+  }
+
+  function drawPointerPreview() {
+    const canvas = elements.pointerPreview;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 흉내 낸 업무 화면: 머리줄, 표 두 줄, 버튼
+    ctx.fillStyle = '#f5f6f7'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#1f2a44'; ctx.fillRect(0, 0, canvas.width, 22);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(16, 36, 288, 64);
+    ctx.fillStyle = '#e1e4e8'; ctx.fillRect(28, 52, 160, 8); ctx.fillRect(28, 76, 120, 8);
+    ctx.fillStyle = '#1f5bd8'; ctx.fillRect(214, 66, 72, 24);
+    if (pointerSettings.enabled) CaptureITPointerMarker.drawMarker(ctx, 250, 78, pointerSettings, 1);
+  }
+
+  function shapeIcon(shapeId) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 44;
+    canvas.height = 44;
+    const ctx = canvas.getContext('2d');
+    const x = shapeId === 'arrow' ? 12 : 22;
+    const y = shapeId === 'arrow' ? 8 : 22;
+    CaptureITPointerMarker.drawMarker(ctx, x, y, { ...pointerSettings, shape: shapeId, size: 'small' }, 2 * 0.75);
+    return canvas;
+  }
+
+  function renderCaptureSettings() {
+    elements.pointerEnabled.checked = pointerSettings.enabled;
+    elements.pointerOptions.classList.toggle('is-off', !pointerSettings.enabled);
+    const pick = (key) => (value) => savePointerSettings({ [key]: value });
+    choiceGroup(elements.pointerShapes, 'pointer-shape', CaptureITPointerMarker.SHAPES, pointerSettings.shape, (item) => shapeIcon(item.id), pick('shape'));
+    choiceGroup(elements.pointerColors, 'pointer-color', CaptureITPointerMarker.COLORS, pointerSettings.color, (item) => Object.assign(document.createElement('span'), { className: 'swatch', style: `background:${item.value}` }), pick('color'));
+    choiceGroup(elements.pointerSizes, 'pointer-size', CaptureITPointerMarker.SIZES, pointerSettings.size, () => null, pick('size'));
+    drawPointerPreview();
+  }
+
+  async function savePointerSettings(change) {
+    pointerSettings = CaptureITPointerMarker.normalizeSettings({ ...pointerSettings, ...change });
+    await extensionStorage.set({ pointerMarker: pointerSettings });
+    renderCaptureSettings();
+  }
+
   function renderAll() {
+    renderTerms();
     renderReportSelector();
     renderReportFields();
     renderSession();
@@ -1808,33 +2037,6 @@
     return saveQueue;
   }
 
-  async function submitSaveAsProject() {
-    const draftReport = CaptureITDomain.ensureDraftReport(report);
-    draftReport.features = editorState.features;
-    let saved;
-    try {
-      saved = CaptureITDomain.saveAsProject(draftReport, {
-        projectName: elements.projectName.value,
-        title: elements.reportTitle.value,
-        author: elements.reportAuthor.value,
-        changePurpose: elements.changePurpose.value,
-        changeSummary: elements.changeSummary.value,
-        configurationOverview: elements.configurationOverview.value,
-      });
-    } catch (error) {
-      setMessage(error.message, true);
-      elements.projectName.focus();
-      return;
-    }
-    saved.updatedAt = new Date().toISOString();
-    report = saved;
-    await CaptureITStorage.putReport(report);
-    await refreshReportSummaries();
-    renderAll();
-    elements.saveProjectDialog.close();
-    setMessage('프로젝트로 저장되었습니다.');
-  }
-
   async function loadReport(reportId) {
     const loaded = await CaptureITStorage.getReport(reportId);
     if (!loaded) throw new Error('보고서를 찾을 수 없습니다.');
@@ -1872,7 +2074,7 @@
   }
 
   async function addFeature() {
-    const feature = CaptureITDomain.addFeature(editorState, '새 테스트케이스');
+    const feature = CaptureITDomain.addFeature(editorState, `새 ${itemWord()}`);
     currentFeatureId = feature.id;
     await saveReport();
     renderFeatures();
@@ -1889,7 +2091,7 @@
 
   async function removeFeature(featureId) {
     const feature = editorState.features.find((item) => item.id === featureId);
-    if (!feature || !confirm(`'${feature.title}' 테스트케이스를 삭제하시겠습니까?`)) return;
+    if (!feature || !confirm(`'${feature.title}' ${itemWord('을/를')} 삭제할까요?`)) return;
     const evidenceIds = [...feature.result.evidenceIds];
     CaptureITDomain.deleteFeature(editorState, featureId);
     for (const evidenceId of evidenceIds) {
@@ -1908,13 +2110,18 @@
   async function featureForMapping() {
     const selected = currentFeature();
     if (selected) return selected;
+    // 하나뿐이면 고르라고 하지 않고 그리로 연결한다.
+    if (editorState.features.length === 1) {
+      currentFeatureId = editorState.features[0].id;
+      return editorState.features[0];
+    }
     if (editorState.features.length === 0) {
       await addFeature();
-      setMessage('테스트케이스가 없어서 새로 만들어 연결했습니다. 이름을 바꿔 주세요.');
+      setMessage(`${itemWord('이/가')} 없어서 새로 만들어 연결했습니다. 이름을 바꿔 주세요.`);
       return currentFeature();
     }
     setPendingMapping(null);
-    setMessage('연결할 테스트케이스를 먼저 고르세요.', true);
+    setMessage(`연결할 ${itemWord('을/를')} 먼저 고르세요.`, true);
     setNarrowPane('features');
     return null;
   }
@@ -1933,7 +2140,7 @@
     let targetIds = evidenceIds;
     if (elsewhere.length > 0) {
       const other = editorState.features.find((item) => item.id === elsewhere[0].featureSpecId);
-      const moveAll = confirm(`이 중 ${elsewhere.length}장은 다른 테스트케이스('${other ? other.title : '다른 항목'}')에 연결돼 있습니다.\n확인: '${feature.title}'(으)로 옮깁니다.\n취소: 연결되지 않은 사진만 연결합니다.`);
+      const moveAll = confirm(`이 중 ${elsewhere.length}장은 다른 ${itemWord()}('${other ? other.title : '다른 항목'}')에 연결돼 있습니다.\n확인: '${feature.title}'(으)로 옮깁니다.\n취소: 연결되지 않은 사진만 연결합니다.`);
       if (!moveAll) {
         const elsewhereIds = new Set(elsewhere.map((item) => item.id));
         targetIds = evidenceIds.filter((id) => !elsewhereIds.has(id));
@@ -2041,7 +2248,7 @@
   }
 
   async function removeEvidence(evidenceId) {
-    if (!confirm('이 사진을 증적에서 완전히 삭제할까요? 되돌릴 수 없습니다.\n테스트케이스 연결만 끊으려면 "연결 해제"를 누르세요.')) return false;
+    if (!confirm(`이 사진을 증적에서 완전히 삭제할까요? 되돌릴 수 없습니다.\n${itemWord()} 연결만 끊으려면 "연결 해제"를 누르세요.`)) return false;
     for (const feature of editorState.features) {
       feature.result.evidenceIds = feature.result.evidenceIds.filter((id) => id !== evidenceId);
     }
@@ -2246,7 +2453,7 @@
     renderSession();
     renderWorkspace();
     setMessage(editorState.evidence.length > 0
-      ? `녹화를 종료했습니다. 증적 ${editorState.evidence.length}개를 테스트케이스에 연결하세요.`
+      ? `녹화를 종료했습니다. 증적 ${editorState.evidence.length}개를 ${itemWord()}에 연결하세요.`
       : '녹화를 종료했습니다.');
     // Auto_Title_On_Session_Stop: 방금 끝난 세션의 증적 그룹에 한해서만, 세션이 종료되는
     // 이 시점 단 한 번 제목 추천을 자동으로 호출한다(captureGraphCard 재렌더링과는 무관).
@@ -2331,11 +2538,20 @@
     for (const file of files) {
       const label = fromPaste ? '붙여넣은 이미지' : file.name;
       try {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-          throw new Error(/\.zip$/i.test(file.name || '') ? 'ZIP은 ⋮ → 받은 ZIP 열어 보기에서 엽니다' : '지원하지 않는 형식');
+        if (!String(file.type || '').startsWith('image/')) {
+          throw new Error(/\.zip$/i.test(file.name || '') ? 'ZIP은 ⋮ → 받은 ZIP 열어 보기에서 엽니다' : '이미지 파일이 아닙니다');
         }
-        const imageDataUrl = await readFileAsDataUrl(file);
-        const loaded = await loadImage(imageDataUrl);
+        // PNG·JPEG·WebP가 아닌 이미지(BMP, GIF 등)도 받아서 PNG로 바꿔 둔다. 문서와 AI 쪽이 세 형식만 다룬다.
+        let imageDataUrl = await readFileAsDataUrl(file);
+        let loaded = await loadImage(imageDataUrl);
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+          const canvas = document.createElement('canvas');
+          canvas.width = loaded.naturalWidth;
+          canvas.height = loaded.naturalHeight;
+          canvas.getContext('2d').drawImage(loaded, 0, 0);
+          imageDataUrl = canvas.toDataURL('image/png');
+          loaded = await loadImage(imageDataUrl);
+        }
         // 문서용 자르기가 편집기 창 크기가 아니라 이미지 원래 크기를 기준으로 하도록 기록한다.
         const viewportSize = { width: loaded.naturalWidth, height: loaded.naturalHeight };
         const fingerprint = await fingerprintFor(imageDataUrl);
@@ -2365,7 +2581,7 @@
             ? { pageTitle: pastedTitle, target: { visibleText: '' }, viewportSize }
             : { pageTitle: file.name, target: { visibleText: file.name }, viewportSize },
           imageDataUrl,
-          imageBlob: file,
+          imageBlob: imageDataUrl.startsWith('data:image/png') && file.type !== 'image/png' ? await (await fetch(imageDataUrl)).blob() : file,
           fingerprint,
           mergedEvents: [],
         };
@@ -2657,20 +2873,30 @@
     try { return JSON.parse(text); } catch { return { content: text }; }
   }
 
-  async function postLlm(payload) {
-    await saveLlmSettings();
-    const settings = readLlmSettings();
-    const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload });
+  async function postLlmOnce(payload, settings, maxTokens) {
+    const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload, maxTokens });
     const response = await fetchLlm(adapterRequest.url, adapterRequest.options);
     const body = await responseBody(response);
     if (!response.ok) {
-      const error = new Error(`내부망 LLM 응답 오류: HTTP ${response.status}`);
+      const error = new Error(`AI 서버가 오류를 돌려줬습니다(HTTP ${response.status}).`);
       error.status = response.status;
       error.responseBody = body;
       throw error;
     }
     await setLlmReady(true);
     return CaptureITLlm.parseAdapterResponse(body);
+  }
+
+  // 답이 출력 한도에 걸려 비었거나 끊겼으면 한도를 늘려 한 번 더 요청한다.
+  async function postLlm(payload) {
+    await saveLlmSettings();
+    const settings = readLlmSettings();
+    try {
+      return await postLlmOnce(payload, settings, CaptureITLlm.DEFAULT_MAX_TOKENS);
+    } catch (error) {
+      if (!error.outputLimit) throw error;
+      return postLlmOnce(payload, settings, CaptureITLlm.RETRY_MAX_TOKENS);
+    }
   }
 
   function diagnosticFeature() {
@@ -2775,7 +3001,7 @@
   // 반드시 그 feature와 같다는 보장이 없으므로 - 예: 다른 카드가 선택된 상태에서 드래그로 매핑).
   async function requestRecommendations(targetFeature = currentFeature()) {
     const feature = targetFeature;
-    if (!feature) throw new Error('테스트케이스를 선택하십시오.');
+    if (!feature) throw new Error(`${itemWord('을/를')} 고르세요.`);
     if (editorState.evidence.length === 0) throw new Error('추천할 증적이 없습니다.');
     const isCurrentFeature = feature.id === (currentFeature() && currentFeature().id);
     if (isCurrentFeature) elements.requestRecommendations.disabled = true;
@@ -2795,7 +3021,7 @@
         await postLlm(stageTwo),
         new Set(editorState.evidence.map((item) => item.id)),
       );
-      if (validated.featureSpecId !== feature.id) throw new Error('다른 테스트케이스의 추천 결과가 반환되었습니다.');
+      if (validated.featureSpecId !== feature.id) throw new Error(`다른 ${itemWord()}의 추천 결과가 돌아왔습니다.`);
       feature.recommendations = validated.suggestions;
       await saveReport();
       renderRecommendations();
@@ -2811,7 +3037,7 @@
   // 실패해도 매핑 자체는 이미 끝난 상태이므로 매핑 흐름을 막지 않고 진행 상태만 UI에 표시한다.
   const AI_PIPELINE_STEP_LABELS = {
     recommendations: '증적 설명 생성',
-    description: '테스트케이스 설명 자동 생성',
+    description: `${docType().descriptionLabel} 초안`,
   };
 
   function setAiPipelineStepStatus(featureId, stepKey, status) {
@@ -2867,7 +3093,7 @@
       setAiPipelineStepStatus(feature.id, 'description', descriptionResult ? 'done' : 'error');
     } catch (error) {
       setAiPipelineStepStatus(feature.id, 'description', 'error');
-      setMessage(`테스트케이스 설명 자동 생성 실패: ${error.message}`, true);
+      setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true);
     }
     finishAiPipeline(feature.id);
   }
@@ -2883,7 +3109,7 @@
     await extensionStorage.set({ llmReady: value }).catch(() => {});
   }
 
-  // 응답이 오지 않으면 60초에서 끊고, 연결 실패를 알아볼 수 있는 말로 바꾼다.
+  // 응답이 오지 않으면 90초에서 끊고, 연결 실패를 알아볼 수 있는 말로 바꾼다.
   async function fetchLlm(url, options) {
     const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
       ? AbortSignal.timeout(LLM_TIMEOUT_MS)
@@ -2892,10 +3118,10 @@
       return await fetch(url, { ...options, signal });
     } catch (error) {
       if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-        throw new Error(`AI 응답이 ${LLM_TIMEOUT_MS / 1000}초 안에 오지 않았습니다. 더보기 → AI 설정에서 연결 테스트를 해 보세요.`);
+        throw new Error(`AI 응답이 ${LLM_TIMEOUT_MS / 1000}초 안에 오지 않았습니다. ⋮ → AI 설정에서 연결 테스트를 해 보세요.`);
       }
       if (error instanceof TypeError) {
-        throw new Error('AI 서버에 연결할 수 없습니다. 사내망 연결과 더보기 → AI 설정을 확인하세요.');
+        throw new Error('AI 서버에 연결할 수 없습니다. 사내망 연결과 ⋮ → AI 설정을 확인하세요.');
       }
       throw error;
     }
@@ -2922,16 +3148,25 @@
   //   aiOpinion은 report.js의 buildManifest가 고르는 필드가 아니므로 산출물에 들어가지 않는다.
   // - 사용자가 이미 쓴 내용은 덮어쓰지 않고, 비어 있는 칸만 AI 초안으로 채운다.
   function applyTestCaseDescription(feature, validated) {
-    const fillIfEmpty = (current, draft) => (String(current || '').trim() ? current : draft);
-    feature.description = fillIfEmpty(feature.description, [
-      `목적: ${validated.testPurpose}`,
-      `사전조건: ${validated.preconditions}`,
-      `절차: ${validated.testProcedure}`,
-      `판단 근거: ${validated.judgementBasis}`,
-    ].filter(Boolean).join('\n'));
-    feature.result.expectedResult = fillIfEmpty(feature.result.expectedResult, validated.expectedResult);
-    feature.result.actualResult = fillIfEmpty(feature.result.actualResult, validated.actualResult);
-    feature.result.verification = fillIfEmpty(feature.result.verification, validated.judgementBasis);
+    const fillIfEmpty = (current, draft) => (String(current || '').trim() ? current : draft || '');
+    const type = docType();
+    // 문서 유형마다 같은 저장 칸이 다른 뜻이다(PoC의 expectedResult는 '질문·후속'). 뜻이 맞는 칸만 채운다.
+    if (type.id === 'proposal') {
+      feature.description = fillIfEmpty(feature.description, validated.testProcedure || validated.testPurpose);
+    } else if (type.id === 'poc') {
+      feature.description = fillIfEmpty(feature.description, validated.testPurpose);
+      feature.result.actualResult = fillIfEmpty(feature.result.actualResult, validated.actualResult);
+    } else {
+      feature.description = fillIfEmpty(feature.description, [
+        `목적: ${validated.testPurpose}`,
+        type.id === 'qa' ? `사전조건: ${validated.preconditions}` : '',
+        `절차: ${validated.testProcedure}`,
+        `판단 근거: ${validated.judgementBasis}`,
+      ].filter(Boolean).join('\n'));
+      feature.result.expectedResult = fillIfEmpty(feature.result.expectedResult, validated.expectedResult);
+      feature.result.actualResult = fillIfEmpty(feature.result.actualResult, validated.actualResult);
+      feature.result.verification = fillIfEmpty(feature.result.verification, type.id === 'test' ? validated.preconditions : validated.judgementBasis);
+    }
     feature.aiOpinion = {
       status: TEST_CASE_STATUS_TO_VERDICT[validated.finalStatus] || null,
       basis: validated.judgementBasis || '',
@@ -2940,10 +3175,10 @@
   }
 
   async function requestTestCaseDescription(feature) {
-    if (!feature) throw new Error('테스트케이스를 선택하십시오.');
+    if (!feature) throw new Error(`${itemWord('을/를')} 고르세요.`);
     const evidenceItems = evidenceForFeature(feature);
-    if (evidenceItems.length === 0) throw new Error('테스트케이스에 매핑된 증적이 없습니다.');
-    setMessage('테스트케이스 설명을 생성하고 있습니다.');
+    if (evidenceItems.length === 0) throw new Error(`${itemWord()}에 연결된 증적이 없습니다.`);
+    setMessage(`${docType().descriptionLabel} 초안을 만들고 있습니다.`);
     try {
       for (const evidence of evidenceItems) await ensureLlmImage(evidence);
       const steps = CaptureITEvidenceStepBuilder.buildEvidenceSteps(evidenceItems);
@@ -2968,7 +3203,7 @@
         : '비어 있던 칸을 AI 초안으로 채웠습니다. 판정은 직접 선택하세요.');
       return validated;
     } catch (error) {
-      setMessage(`테스트케이스 설명 생성 실패: ${error.message}`, true);
+      setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true);
       return null;
     }
   }
@@ -3200,7 +3435,8 @@
     setMessage(`ZIP 생성 중 · ${entries.length}개 파일 처리`);
     const archive = await CaptureITZip.writeZip(entries);
     if (await saveZip(archive, exportFilename('QA결과'), 'report')) {
-      setMessage(`ZIP 저장 완료 · ${manifest.summary.total}개 테스트케이스 · ${manifest.overallStatus}`);
+      elements.exportDialog.close();
+      setMessage(`증적 문서를 저장했습니다 · ${itemWord()} ${manifest.summary.total}개${docType().verdict ? ` · ${manifest.overallStatus}` : ''}`, false, { label: '폴더에서 보기', run: showLastDownloadFile });
     }
   }
 
@@ -3210,7 +3446,8 @@
     setMessage(`증적 ZIP 생성 중 · ${entries.length}개 파일 처리`);
     const archive = await CaptureITZip.writeZip(entries);
     if (await saveZip(archive, exportFilename('증적'), 'evidence-only')) {
-      setMessage(`증적 ZIP 저장 완료 · ${manifest.totalEvidence}개 증적`);
+      elements.exportDialog.close();
+      setMessage(`증적 ZIP을 저장했습니다 · 증적 ${manifest.totalEvidence}개`, false, { label: '폴더에서 보기', run: showLastDownloadFile });
     }
   }
 
@@ -3254,23 +3491,35 @@
     requestReportDraftSuggestion().catch(() => {});
   }
 
-  function updateReportFromInputs() {
-    if (!report) return;
-    report.title = elements.reportTitle.value;
-    report.projectName = elements.projectName.value;
-    report.author = elements.reportAuthor.value;
-    report.changePurpose = elements.changePurpose.value;
-    report.changeSummary = elements.changeSummary.value;
-    report.configurationOverview = elements.configurationOverview.value;
-    queueSave();
+  // 보고서 정보(문서 머리말·변경 개요)는 내보내기 창 안에서 적는 대로 저장한다. 모두 선택 입력이다.
+  // 예전의 프로젝트 저장 절차(프로젝트명 필수, 저장 버튼)는 저장이 원래 자동이라 절차만 하나 더 있어 없앴다.
+  const REPORT_INFO_FIELDS = [
+    ['reportTitle', 'title'],
+    ['projectName', 'projectName'],
+    ['reportAuthor', 'author'],
+    ['changePurpose', 'changePurpose'],
+    ['changeSummary', 'changeSummary'],
+    ['configurationOverview', 'configurationOverview'],
+  ];
+
+  function bindInputs() {
+    for (const [elementKey, reportKey] of REPORT_INFO_FIELDS) {
+      elements[elementKey].addEventListener('change', async () => {
+        const value = elements[elementKey].value;
+        await ensureDraftReportForCapture();
+        report[reportKey] = reportKey === 'title' ? value.trim() : value;
+        queueSave();
+        if (reportKey === 'title') renderReportSelector();
+      });
+    }
   }
 
-  // 테스트케이스 필드(제목/설명/기대결과/실제결과)는 각 카드가 자체 change 리스너로
-  // saveFeatureTitle/saveFeatureDescription/saveFeatureExpectedResult/saveFeatureActualResult를
-  // 직접 호출하므로, 여기서는 보고서 식별 정보 입력만 바인딩한다.
-  // 보고서 정보 입력란은 "프로젝트로 저장" 대화상자 안에 있다. 칸마다 바로 저장하면 취소를 눌러도
-  // 이미 저장돼 있었으므로, 제출할 때만 반영하고 취소하면 원래 값으로 되돌린다.
-  function bindInputs() {}
+  function openReportInfo() {
+    openExportDialog();
+    renderReportFields();
+    elements.reportInfo.open = true;
+    elements.reportTitle.focus();
+  }
 
   async function refreshEvidence() {
     const knownIds = new Set(editorState.evidence.map((item) => item.id));
@@ -3304,11 +3553,15 @@
       'llmModel',
       'llmTemplate',
       'preferredReportTemplate',
+      'preferredDocumentType',
+      'pointerMarker',
       'llmReady',
     ]);
     session = stored.captureSession || null;
     lastExport = stored.lastExport || null;
     preferredTemplate = stored.preferredReportTemplate || null;
+    preferredDocumentType = stored.preferredDocumentType || null;
+    pointerSettings = CaptureITPointerMarker.normalizeSettings(stored.pointerMarker);
     llmReady = Boolean(stored.llmReady);
     elements.llmAdapter.value = stored.llmAdapter || 'nh-ai-gateway';
     elements.llmApiKey.value = stored.llmApiKey || '';
@@ -3345,6 +3598,7 @@
   elements.deleteReport.addEventListener('click', () => removeReport().catch((error) => setMessage(error.message, true)));
   elements.addFeature.addEventListener('click', () => addFeature().catch((error) => setMessage(error.message, true)));
   elements.toggleSession.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
+  elements.stopRecordingBar.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
   elements.imageImport.addEventListener('change', () => {
     const files = [...elements.imageImport.files];
     elements.imageImport.value = '';
@@ -3388,11 +3642,11 @@
     }
   });
   elements.openViewer.addEventListener('click', openViewerPage);
-  elements.exportReport.addEventListener('click', () => exportReport().catch((error) => setMessage(`보고서 생성 실패: ${error.message}`, true)));
-  elements.exportEvidenceOnly.addEventListener('click', () => exportEvidenceOnly().catch((error) => setMessage(`증적 ZIP 생성 실패: ${error.message}`, true)));
+  elements.exportReport.addEventListener('click', () => withBusy(elements.exportReport, 'ZIP 만드는 중…', exportReport).catch((error) => setMessage(`보고서 생성 실패: ${error.message}`, true)));
+  elements.exportEvidenceOnly.addEventListener('click', () => withBusy(elements.exportEvidenceOnly, 'ZIP 만드는 중…', exportEvidenceOnly).catch((error) => setMessage(`증적 ZIP 생성 실패: ${error.message}`, true)));
   elements.showLastDownload.addEventListener('click', () => showLastDownloadFile().catch((error) => setMessage(error.message, true)));
   elements.showDownloadFolder.addEventListener('click', () => showDefaultDownloadFolder());
-  elements.previewReport.addEventListener('click', () => previewReport().catch((error) => setMessage(`미리보기 실패: ${error.message}`, true)));
+  elements.previewReport.addEventListener('click', () => withBusy(elements.previewReport, '여는 중…', previewReport).catch((error) => setMessage(`미리보기 실패: ${error.message}`, true)));
   elements.closeEvidenceDetail.addEventListener('click', () => elements.evidenceDetailDialog.close());
   elements.previousEvidenceDetail.addEventListener('click', () => moveEvidenceDetail(-1));
   elements.nextEvidenceDetail.addEventListener('click', () => moveEvidenceDetail(1));
@@ -3421,23 +3675,16 @@
     menuItem.addEventListener('click', () => setMoreMenuOpen(false));
   }
   elements.openLlmSettings.addEventListener('click', () => elements.llmSettingsDialog.showModal());
+  elements.openCaptureSettings.addEventListener('click', () => {
+    renderCaptureSettings();
+    elements.captureSettingsDialog.showModal();
+  });
+  elements.closeCaptureSettings.addEventListener('click', () => elements.captureSettingsDialog.close());
+  elements.pointerEnabled.addEventListener('change', () => {
+    savePointerSettings({ enabled: elements.pointerEnabled.checked }).catch((error) => setMessage(error.message, true));
+  });
   elements.closeLlmSettings.addEventListener('click', () => elements.llmSettingsDialog.close());
-  elements.openSaveProjectMenu.addEventListener('click', () => {
-    renderReportFields();
-    elements.saveProjectDialog.showModal();
-  });
-  elements.openSaveProject.addEventListener('click', () => {
-    renderReportFields();
-    elements.saveProjectDialog.showModal();
-  });
-  elements.cancelSaveProject.addEventListener('click', () => {
-    renderReportFields();
-    elements.saveProjectDialog.close();
-  });
-  elements.saveProjectDialog.querySelector('form').addEventListener('submit', (event) => {
-    event.preventDefault();
-    submitSaveAsProject().catch((error) => setMessage(`프로젝트 저장 실패: ${error.message}`, true));
-  });
+  elements.openReportInfo.addEventListener('click', openReportInfo);
   elements.dismissDraftSuggestion.addEventListener('click', () => {
     elements.reportDraftSuggestionDialog.close();
     renderGuidance();
@@ -3475,8 +3722,8 @@
 
   elements.testLlmConnection.addEventListener('click', () => runLlmDiagnostic('connection').catch((error) => setMessage(`LLM 연결 테스트 실패: ${error.message}`, true)));
   elements.testLlmRecommendation.addEventListener('click', () => runLlmDiagnostic('recommendation').catch((error) => setMessage(`LLM 추천 테스트 실패: ${error.message}`, true)));
-  elements.requestRecommendations.addEventListener('click', () => requestRecommendations().catch((error) => setMessage(`추천 실패: ${error.message}`, true)));
-  elements.requestTestCaseDescriptionButton.addEventListener('click', () => requestTestCaseDescription(currentFeature()).catch((error) => setMessage(`테스트케이스 설명 생성 실패: ${error.message}`, true)));
+  elements.requestRecommendations.addEventListener('click', () => withBusy(elements.requestRecommendations, 'AI가 보는 중…', () => requestRecommendations()).catch((error) => setMessage(`추천 실패: ${error.message}`, true)));
+  elements.requestTestCaseDescriptionButton.addEventListener('click', () => withBusy(elements.requestTestCaseDescriptionButton, 'AI가 쓰는 중…', () => requestTestCaseDescription(currentFeature())).catch((error) => setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true)));
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
       if (message && message.type === 'EVIDENCE_CREATED') refreshEvidence().catch(() => {});
@@ -3493,5 +3740,6 @@
   }
 
   bindInputs();
+  CaptureITTooltip.install(document);
   load().catch((error) => setMessage(error.message, true));
 })();

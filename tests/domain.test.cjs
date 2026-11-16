@@ -117,13 +117,6 @@ test('ensureDraftReport creates a draft when no report exists and returns the ex
   assert.equal(returned, existingReport);
 });
 
-test('saveAsProject throws when projectName is missing or blank', () => {
-  const domain = loadDomain();
-  const draftReport = domain.createReport('', 'REPORT-1');
-
-  assert.throws(() => domain.saveAsProject(draftReport, {}));
-  assert.throws(() => domain.saveAsProject(draftReport, { projectName: '   ' }));
-});
 
 test('applyQuickMapping throws and leaves state unchanged when verification is missing or blank', () => {
   const domain = loadDomain();

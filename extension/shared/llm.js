@@ -17,9 +17,12 @@
   const VALID_ROLES = new Set(['before', 'action', 'after']);
   const MANUAL_PIN_IMAGE_BONUS = 10;
   const ALLOWED_TEST_CASE_STATUSES = new Set(['PASS', 'FAIL', 'INCOMPLETE', 'NOT_JUDGED']);
-  // NH AI Gateway(Anthropic Messages API 문법)는 max_tokens가 필수 필드다. 사용자가 공유한
-  // 내부 연동 스니펫의 기본값(1024)을 그대로 따른다.
-  const DEFAULT_MAX_TOKENS = 1024;
+  // NH AI Gateway(Anthropic Messages API 문법)는 max_tokens가 필수 필드다. 예전에는 연동 스니펫의
+  // 1024를 그대로 썼는데, 답하기 전에 생각(추론)하는 모델은 이 한도를 생각에 다 써 버려 글자 없는
+  // 응답("LLM response content is empty")이 왔다. 연결 테스트처럼 짧은 요청만 통과하고 이미지가 붙은
+  // 실제 요청은 실패했다. 넉넉히 주고, 그래도 한도에 걸리면 편집기가 한 번 더 크게 요청한다.
+  const DEFAULT_MAX_TOKENS = 4096;
+  const RETRY_MAX_TOKENS = 8192;
 
   function featureContext(feature, changePurpose = '') {
     return {
@@ -514,12 +517,21 @@
   // 프롬프트는 messages 배열 안이 아니라 요청 바디의 최상위 system 필드로 전달하고, messages에는
   // user(및 assistant) role만 올 수 있다. 이미지 분리 로직(extractImageDataUrls)은 동일하게
   // 재사용한다.
+  // Anthropic Messages API의 이미지 블록. OpenAI식 image_url 블록은 이 문법에 없어 게이트웨이가
+  // 버리거나 거부할 수 있다.
+  function anthropicImageBlock(dataUrl) {
+    const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
+    if (!match) return null;
+    return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+  }
+
   function buildAnthropicMessages(payload) {
     const images = [];
     const textOnlyPayload = extractImageDataUrls(payload, images);
     const userContent = [{ type: 'text', text: safeJson(textOnlyPayload) }];
     for (const image of images) {
-      userContent.push({ type: 'image_url', image_url: { url: image } });
+      const block = anthropicImageBlock(image);
+      if (block) userContent.push(block);
     }
     return {
       system: SYSTEM_PROMPT,
@@ -541,6 +553,7 @@
     payload,
     rawTemplate = '',
     temperature = 0.1,
+    maxTokens = DEFAULT_MAX_TOKENS,
   }) {
     const selectedAdapter = normalizeAdapter(adapter);
     const headers = { 'Content-Type': 'application/json' };
@@ -585,7 +598,7 @@
       const { system, messages } = buildAnthropicMessages(payload);
       body = {
         model,
-        max_tokens: DEFAULT_MAX_TOKENS,
+        max_tokens: maxTokens,
         system,
         messages,
       };
@@ -625,13 +638,45 @@
     return '';
   }
 
+  // 응답이 왜 끝났는지(Anthropic: stop_reason, OpenAI: finish_reason).
+  function stopReasonOf(response) {
+    if (!response || typeof response !== 'object') return '';
+    if (response.stop_reason) return String(response.stop_reason);
+    const choice = Array.isArray(response.choices) && response.choices[0];
+    return choice && choice.finish_reason ? String(choice.finish_reason) : '';
+  }
+
+  function isOutputLimit(stopReason) {
+    return stopReason === 'max_tokens' || stopReason === 'length';
+  }
+
+  function responseError(message, response, code) {
+    const error = new Error(message);
+    error.code = code;
+    error.stopReason = stopReasonOf(response);
+    error.outputLimit = isOutputLimit(error.stopReason);
+    error.responseBody = response;
+    return error;
+  }
+
   function parseAdapterResponse(response) {
-    if (!response || typeof response !== 'object') throw new Error('Invalid LLM response');
+    if (!response || typeof response !== 'object') throw responseError('AI 응답 형식을 알 수 없습니다.', response, 'INVALID_RESPONSE');
     if (Array.isArray(response.candidateCaptureIds) || Array.isArray(response.suggestions)) return response;
     const content = extractContentText(response).trim();
-    if (!content) throw new Error('LLM response content is empty');
+    const stopReason = stopReasonOf(response);
+    if (!content) {
+      const reason = isOutputLimit(stopReason)
+        ? '답을 쓰기 전에 출력 한도에 걸렸습니다'
+        : stopReason ? `종료 이유: ${stopReason}` : '글자가 없는 응답입니다';
+      throw responseError(`AI가 빈 응답을 보냈습니다(${reason}). AI 설정의 모델이 이미지와 긴 답을 지원하는지 확인하세요.`, response, 'EMPTY_RESPONSE');
+    }
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    return JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    try {
+      return JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    } catch {
+      const reason = isOutputLimit(stopReason) ? ' 출력 한도에 걸려 답이 중간에 끊겼습니다.' : '';
+      throw responseError(`AI 응답을 JSON으로 읽지 못했습니다.${reason}`, response, 'INVALID_JSON');
+    }
   }
 
   function classifyDiagnosticError(error = {}) {
@@ -675,6 +720,10 @@
 
   return {
     DEFAULT_ENDPOINT,
+    DEFAULT_MAX_TOKENS,
+    RETRY_MAX_TOKENS,
+    anthropicImageBlock,
+    stopReasonOf,
     DEFAULT_MODEL,
     ADAPTER_DEFAULT_ENDPOINTS,
     MANUAL_PIN_IMAGE_BONUS,
