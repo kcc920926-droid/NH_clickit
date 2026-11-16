@@ -413,7 +413,7 @@ test('feature-mapping-target 드로어에서 AI 버튼(request-recommendations/r
 // Auto_AI_Pipeline: Capture_Graph가 테스트케이스에 매핑되는 순간(mapEvidenceIds/Quick_Mapping_Dialog
 // 공유 경로) "증적 설명 생성" → "테스트케이스 설명 자동 생성"을 순서대로 자동 호출한다.
 test('requestRecommendations는 targetFeature 파라미터를 받아 currentFeature()와 무관하게 특정 feature를 대상으로 추천을 요청할 수 있다', () => {
-  const signatureMatch = source.match(/async function requestRecommendations\(targetFeature\s*=\s*currentFeature\(\)\)\s*{/);
+  const signatureMatch = source.match(/async function requestRecommendations\(targetFeature\s*=\s*currentFeature\(\),\s*options = \{\}\)\s*{/);
   assert.ok(signatureMatch, 'requestRecommendations는 targetFeature를 기본값 currentFeature()로 받아야 한다');
   // extractFunctionBody의 매개변수 정규식(\([^)]*\))은 기본값 안에 괄호가 있는 시그니처를 못 찾으므로,
   // 여기서 여는 중괄호 위치를 직접 찾아 findBraceBlock으로 본문을 추출한다.
@@ -443,8 +443,8 @@ test('submitQuickMapping도 매핑 완료 후 매핑된 feature를 대상으로 
 
 test('runAutoAiPipeline은 증적 설명 생성 후 테스트케이스 설명 자동 생성을 순서대로 실행하고, 1단계 실패도 2단계 진행을 막지 않는다', () => {
   const body = extractFunctionBody(source, 'runAutoAiPipeline');
-  const recoIndex = body.indexOf('await requestRecommendations(feature)');
-  const descriptionIndex = body.indexOf('await requestTestCaseDescription(feature)');
+  const recoIndex = body.indexOf('await requestRecommendations(feature,');
+  const descriptionIndex = body.indexOf('await requestTestCaseDescription(feature,');
   assert.ok(recoIndex !== -1 && descriptionIndex !== -1 && recoIndex < descriptionIndex, '증적 설명 생성이 테스트케이스 설명 자동 생성보다 먼저 실행되어야 한다');
   assert.match(body, /startAiPipeline\(feature\.id\)/, '파이프라인 시작 시 진행 상태를 초기화해야 한다');
   // 진행 상태는 테스트케이스별로 둔다(동시에 두 매핑이 돌아도 섞이지 않게).
@@ -456,7 +456,10 @@ test('runAutoAiPipeline은 증적 설명 생성 후 테스트케이스 설명 �
 
 test('autoRunAiPipelineForFeature는 실패해도 매핑 흐름을 막지 않는다', () => {
   const body = extractFunctionBody(source, 'autoRunAiPipelineForFeature');
-  assert.match(body, /runAutoAiPipeline\(feature\)\.catch\(/, 'runAutoAiPipeline 호출은 await되지 않고 catch로만 처리되어야 한다');
+  assert.match(body, /runAutoAiPipeline\(current\)\.catch\(/, 'runAutoAiPipeline 호출은 await되지 않고 catch로만 처리되어야 한다');
+  // 연결을 여러 번 빨리 눌러도 마지막 연결 뒤 한 번만 돌리고, 도는 중이면 끝난 뒤 한 번 더 돌린다.
+  assert.match(body, /if \(pipelineRunning\.has\(featureId\)\) \{\s*pipelineRerun\.add\(featureId\);/);
+  assert.match(body, /clearTimeout\(pipelineTimers\.get\(featureId\)\);/);
 });
 
 test('featureCard는 이 테스트케이스의 AI 진행 상태가 있을 때 ai-generating 클래스와 진행 체크리스트를 렌더링한다', () => {

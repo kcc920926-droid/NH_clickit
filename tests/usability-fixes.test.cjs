@@ -106,8 +106,8 @@ test('QA 뷰어는 증적만 ZIP을 열고, 받은 HTML이 외부 주소를 불�
 });
 
 test('AI 답이 출력 한도에 걸리면 한도를 늘려 한 번만 다시 요청한다', () => {
-  const start = editorSource.indexOf('async function postLlm(payload)');
+  const start = editorSource.indexOf('function postLlm(payload, options = {})');
   const body = editorSource.slice(start, editorSource.indexOf('\n  }\n', start));
-  assert.match(body, /postLlmOnce\(payload, settings, CaptureITLlm\.DEFAULT_MAX_TOKENS\)/);
-  assert.match(body, /if \(!error\.outputLimit\) throw error;\s*return postLlmOnce\(payload, settings, CaptureITLlm\.RETRY_MAX_TOKENS\);/);
+  assert.match(body, /sendLlmRequest\(body, settings, CaptureITLlm\.DEFAULT_MAX_TOKENS, onStatus\)/);
+  assert.match(body, /if \(!error\.outputLimit\) throw error;[\s\S]*?return sendLlmRequest\(body, settings, CaptureITLlm\.RETRY_MAX_TOKENS, onStatus\);/);
 });

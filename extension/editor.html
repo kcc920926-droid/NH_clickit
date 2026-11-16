@@ -239,7 +239,9 @@
     <div class="form-grid llm-grid">
       <label class="wide">API 엔드포인트<input id="llm-endpoint" type="url" inputmode="url" placeholder="http://ai-driven-gw.aihb.kube.test.nhbank/v1/messages"><span id="llm-endpoint-hint" class="hint" hidden>NH AI Gateway/OpenAI compatible은 Adapter에 따라 자동으로 고정됩니다. Raw JSON template에서만 직접 입력할 수 있습니다.</span></label>
       <label>API Key<input id="llm-api-key" type="password" autocomplete="off" placeholder="payload api_key"></label>
-      <label>Model<input id="llm-model" type="text" placeholder="모델명"></label>
+      <label>Model<input id="llm-model" type="text" placeholder="예: multimodal"><span class="hint">화면 이미지를 함께 보내므로 이미지를 읽는 모델을 쓰세요. 못 읽는 모델이면 글자만 보냅니다.</span></label>
+      <p id="llm-text-only" class="hint wide llm-text-only" hidden></p>
+      <label>분당 토큰 한도<input id="llm-tpm" type="number" min="1000" step="1000" inputmode="numeric" placeholder="150000"><span class="hint">게이트웨이의 이 모델 한도. 넘지 않게 요청을 나눠 보냅니다.</span></label>
       <label class="wide">Adapter<select id="llm-adapter">
         <option value="nh-ai-gateway">NH AI Gateway · 내부망 liteLLM (/v1/messages)</option>
         <option value="openai-compatible">OpenAI compatible · 외부망 공식 OpenAI API</option>
@@ -296,6 +298,7 @@
   <script src="shared/evidence-dedupe.js"></script>
   <script src="shared/pointer-marker.js"></script>
   <script src="shared/llm.js"></script>
+  <script src="shared/ai-budget.js"></script>
   <script src="shared/tooltip.js"></script>
   <script src="editor.js"></script>
 </body>

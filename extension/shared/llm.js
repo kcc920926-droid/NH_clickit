@@ -149,26 +149,51 @@
     };
   }
 
+  // 2단계 추천 응답 검사. 예전에는 항목 하나만 어긋나도(모르는 증적, 중복, 순위가 글자, 역할이 'result' 등)
+  // 전체를 버려 "증적 설명 생성 실패"가 잦았다. 이제 쓸 수 있는 항목만 남기고, 모르는 증적·중복은 버린다.
+  // 하나도 못 쓰면 이유를 담아 실패한다.
+  const ROLE_ALIASES = {
+    before: 'before', pre: 'before', '수행 전': 'before', '전': 'before', '이전': 'before',
+    action: 'action', '수행 시점': 'action', '수행': 'action', '동작': 'action', '조작': 'action',
+    after: 'after', post: 'after', result: 'after', '수행 후': 'after', '후': 'after', '결과': 'after', '이후': 'after',
+  };
+
+  function normalizeRole(value) {
+    const text = String(value || '').trim();
+    return ROLE_ALIASES[text.toLowerCase()] || ROLE_ALIASES[text] || null;
+  }
+
   function validateRecommendations(response, knownEvidenceIds) {
-    if (!response || typeof response.featureSpecId !== 'string' || !Array.isArray(response.suggestions)) {
-      throw new Error('Invalid recommendation response');
+    if (!response || !Array.isArray(response.suggestions)) {
+      throw new Error('AI 추천 응답에 추천 목록(suggestions)이 없습니다.');
     }
     const seen = new Set();
-    const suggestions = response.suggestions.map((item) => {
-      if (!knownEvidenceIds.has(item.captureId)) throw new Error(`Unknown evidence: ${item.captureId}`);
-      if (seen.has(item.captureId)) throw new Error(`Duplicate evidence: ${item.captureId}`);
-      if (!Number.isInteger(item.rank) || item.rank < 1) throw new Error(`Invalid recommendation rank: ${item.rank}`);
-      if (!VALID_ROLES.has(item.role)) throw new Error(`Invalid recommendation role: ${item.role}`);
-      if (typeof item.reason !== 'string' || !item.reason.trim()) throw new Error('Recommendation reason is required');
-      seen.add(item.captureId);
-      return {
-        captureId: item.captureId,
-        rank: item.rank,
-        role: item.role,
-        reason: item.reason.trim(),
-      };
-    }).sort((left, right) => left.rank - right.rank);
-    return { featureSpecId: response.featureSpecId, suggestions };
+    const dropped = [];
+    const kept = [];
+    response.suggestions.forEach((item, index) => {
+      const captureId = String(item && (item.captureId || item.id) || '');
+      if (!knownEvidenceIds.has(captureId)) {
+        dropped.push(`모르는 증적 ${captureId || '(빈 값)'}`);
+        return;
+      }
+      if (seen.has(captureId)) {
+        dropped.push(`중복 ${captureId}`);
+        return;
+      }
+      seen.add(captureId);
+      const rank = Number.parseInt(item.rank, 10);
+      kept.push({
+        captureId,
+        rank: Number.isInteger(rank) && rank > 0 ? rank : index + 1,
+        role: normalizeRole(item.role) || 'action',
+        reason: typeof item.reason === 'string' && item.reason.trim() ? item.reason.trim() : 'AI가 이유를 적지 않았습니다.',
+      });
+    });
+    if (kept.length === 0) {
+      throw new Error(`AI 추천을 하나도 쓸 수 없었습니다(${dropped.slice(0, 3).join(', ') || '빈 목록'}).`);
+    }
+    const suggestions = kept.sort((left, right) => left.rank - right.rank).map((item, position) => ({ ...item, rank: position + 1 }));
+    return { featureSpecId: typeof response.featureSpecId === 'string' ? response.featureSpecId : '', suggestions, dropped };
   }
 
   function contextText(evidence) {

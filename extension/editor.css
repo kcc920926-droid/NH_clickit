@@ -233,6 +233,10 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .ai-pipeline-step-done .ai-pipeline-step-icon { color: #fff; background: var(--pass); }
 .ai-pipeline-step-error { color: var(--fail); }
 .ai-pipeline-step-error .ai-pipeline-step-icon { color: #fff; background: var(--fail); }
+.ai-pipeline-step { flex-wrap: wrap; }
+.ai-pipeline-step-detail { color: var(--ink-3); font-weight: 400; }
+.ai-pipeline-step-detail::before { content: "· "; }
+.ai-pipeline-step-error .ai-pipeline-step-detail { color: var(--fail); }
 .feature-description-field { padding: 0 10px 8px; }
 .feature-field-label { display: block; margin-bottom: 3px; color: var(--ink-3); font-size: 11px; font-weight: 600; }
 .feature-field-label.required::after { content: " *"; color: var(--fail); }
@@ -277,7 +281,7 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .sheet-heading h2 { font-size: 15px; }
 .sheet-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
 .sheet-note { padding: 10px 14px 0; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; padding: 12px 14px 0; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: start; gap: 10px; padding: 12px 14px 0; }
 .wide { grid-column: 1 / -1; }
 .report-toolbar { display: grid; gap: 4px; padding: 12px 14px 0; }
 .report-toolbar .sheet-actions { padding: 8px 0 14px; }
@@ -435,3 +439,4 @@ button[aria-busy="true"] { cursor: progress; }
 body.choosing .capture-bar .paste-zone, body.choosing .capture-shortcut-hint, body.choosing #record-target { display: none; }
 body.choosing .capture-title { font-size: 13px; }
 .workspace.choosing .workspace-grid, .workspace.choosing .pane-switch, .workspace.choosing .guidance { display: none; }
+.llm-text-only { margin: 0; padding: 6px 8px; border-radius: 4px; color: var(--warn-ink); background: var(--warn-soft); }

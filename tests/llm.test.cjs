@@ -69,16 +69,26 @@ test('stage two caps the number of embedded images regardless of how many candid
   );
 });
 
-test('recommendation validation rejects unknown evidence and invalid roles', () => {
+test('2단계 추천 검사는 쓸 수 있는 항목만 남기고, 모르는 증적·중복은 버리며, 하나도 없으면 이유를 담아 실패한다', () => {
   const llm = loadLlm();
   assert.throws(() => llm.validateRecommendations({
     featureSpecId: 'FS-001',
     suggestions: [{ captureId: 'CAP-X', rank: 1, role: 'after', reason: 'unknown' }],
-  }, new Set(['CAP-1'])), /Unknown evidence/);
-  assert.throws(() => llm.validateRecommendations({
-    featureSpecId: 'FS-001',
-    suggestions: [{ captureId: 'CAP-1', rank: 1, role: 'result', reason: 'invalid' }],
-  }, new Set(['CAP-1'])), /Invalid recommendation role/);
+  }, new Set(['CAP-1'])), /AI 추천을 하나도 쓸 수 없었습니다\(모르는 증적 CAP-X\)/);
+  const result = llm.validateRecommendations({
+    suggestions: [
+      { captureId: 'CAP-2', rank: '2', role: '결과', reason: '' },
+      { captureId: 'CAP-X', rank: 1, role: 'before', reason: '환각' },
+      { captureId: 'CAP-1', rank: 1, role: 'result', reason: '승인 뒤 화면' },
+      { captureId: 'CAP-1', rank: 3, role: 'after', reason: '중복' },
+    ],
+  }, new Set(['CAP-1', 'CAP-2']));
+  assert.deepEqual(result.suggestions, [
+    { captureId: 'CAP-1', rank: 1, role: 'after', reason: '승인 뒤 화면' },
+    { captureId: 'CAP-2', rank: 2, role: 'after', reason: 'AI가 이유를 적지 않았습니다.' },
+  ]);
+  assert.deepEqual(result.dropped, ['모르는 증적 CAP-X', '중복 CAP-1']);
+  assert.throws(() => llm.validateRecommendations({ featureSpecId: 'F' }, new Set()), /추천 목록\(suggestions\)이 없습니다/);
 });
 
 // NH AI Gateway(내부망 liteLLM, /v1/messages)는 실제로는 Anthropic Messages API 문법을 따른다

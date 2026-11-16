@@ -507,7 +507,7 @@ test('handler functions remain bound to their corresponding buttons via addEvent
   );
   assert.match(
     script,
-    /elements\.requestRecommendations\.addEventListener\('click', \(\) => withBusy\(elements\.requestRecommendations, 'AI가 보는 중…', \(\) => requestRecommendations\(\)\)/,
+    /elements\.requestRecommendations\.addEventListener\('click', \(\) => withBusy\(elements\.requestRecommendations, 'AI가 보는 중…', \(\) => requestRecommendations\(currentFeature\(\), \{ onStatus/,
     '#request-recommendations button should still be bound to requestRecommendations()',
   );
   assert.match(

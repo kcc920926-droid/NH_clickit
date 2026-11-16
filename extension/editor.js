@@ -46,6 +46,8 @@
     llmEndpoint: byId('llm-endpoint'),
     llmEndpointHint: byId('llm-endpoint-hint'),
     llmModel: byId('llm-model'),
+    llmTpm: byId('llm-tpm'),
+    llmTextOnly: byId('llm-text-only'),
     llmSettingsDialog: byId('llm-settings-dialog'),
     llmTemplate: byId('llm-template'),
     mappedEvidence: byId('mapped-evidence'),
@@ -618,6 +620,8 @@
         const label = document.createElement('span');
         label.textContent = step.label;
         item.append(icon, label);
+        // 지금 무엇을 하는지(1/2 후보 고르는 중, 분당 한도 대기 12초 등)와 실패 이유를 바로 옆에 보여 준다.
+        if (step.detail) item.append(Object.assign(document.createElement('span'), { className: 'ai-pipeline-step-detail', textContent: step.detail }));
         pipelineChecklist.append(item);
       }
     }
@@ -2916,7 +2920,23 @@
       llmEndpoint: endpoint.href,
       llmModel: elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL,
       llmTemplate: elements.llmTemplate.value || '',
+      llmTokensPerMinuteByModel: { ...tokensPerMinuteByModel, [elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL]: readTokensPerMinute() },
     });
+  }
+
+  // 분당 토큰 한도는 모델마다 다르다(사내 게이트웨이). 모델 이름별로 기억한다.
+  let tokensPerMinuteByModel = {};
+
+  function readTokensPerMinute() {
+    tokenBudget.setLimit(Number.parseInt(elements.llmTpm.value, 10));
+    tokensPerMinuteByModel[elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL] = tokenBudget.limit;
+    return tokenBudget.limit;
+  }
+
+  function showTokensPerMinuteForModel() {
+    const model = elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL;
+    elements.llmTpm.value = String(tokensPerMinuteByModel[model] || DEFAULT_TOKENS_PER_MINUTE);
+    tokenBudget.setLimit(Number.parseInt(elements.llmTpm.value, 10));
   }
 
   function renderLlmDiagnostics(summary) {
@@ -2931,30 +2951,145 @@
     try { return JSON.parse(text); } catch { return { content: text }; }
   }
 
-  async function postLlmOnce(payload, settings, maxTokens) {
-    const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload, maxTokens });
-    const response = await fetchLlm(adapterRequest.url, adapterRequest.options);
-    const body = await responseBody(response);
-    if (!response.ok) {
-      const error = new Error(`AI 서버가 오류를 돌려줬습니다(HTTP ${response.status}).`);
-      error.status = response.status;
-      error.responseBody = body;
-      throw error;
+  // ── AI 요청 줄 세우기 ───────────────────────────────────────────────
+  // 사내 게이트웨이는 분당 토큰 한도(기본 15만)가 있다. 연결을 여러 번 누르면 AI 요청이 한꺼번에 몰려
+  // 한도에 걸리고(HTTP 429) "증적 설명 생성 실패"가 났다. 그래서
+  //  - 요청은 한 번에 하나씩 보낸다.
+  //  - 최근 1분 동안 쓴 토큰(추정)과 이번 요청(추정)의 합이 한도를 넘으면 그만큼 기다린다(남은 초를 보여 준다).
+  //  - 그래도 429가 오면 서버가 알려 준 시간(Retry-After)만큼, 없으면 20초·40초 뒤 다시 보낸다.
+  const DEFAULT_TOKENS_PER_MINUTE = CaptureITAiBudget.DEFAULT_TOKENS_PER_MINUTE;
+  const tokenBudget = CaptureITAiBudget.createTokenBudget(DEFAULT_TOKENS_PER_MINUTE);
+  let llmChain = Promise.resolve();
+  let llmQueued = 0;
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function waitForTokenBudget(estimate, onStatus) {
+    for (let waitMs = tokenBudget.waitMs(estimate, Date.now()); waitMs > 0; waitMs = tokenBudget.waitMs(estimate, Date.now())) {
+      onStatus(`분당 한도를 넘지 않게 ${Math.ceil(waitMs / 1000)}초 기다리는 중`);
+      await sleep(Math.min(waitMs, 1000));
     }
-    await setLlmReady(true);
-    return CaptureITLlm.parseAdapterResponse(body);
+  }
+
+  // 서버 오류를 사람이 읽을 수 있게: 상태 코드별 설명 + 서버가 보낸 문구 앞부분.
+  function llmHttpError(response, body) {
+    const serverText = String(body && (body.error && (body.error.message || body.error) || body.detail || body.message) || '').slice(0, 160);
+    const status = response.status;
+    const reason = status === 429 ? '사내 AI 사용량 한도(분당)에 걸렸습니다'
+      : status === 413 || status === 400 ? '요청이 너무 크거나 형식이 맞지 않습니다'
+        : status === 401 || status === 403 ? 'API 키가 맞지 않거나 권한이 없습니다'
+          : status >= 500 ? 'AI 서버 쪽 오류입니다'
+            : '요청이 거절됐습니다';
+    const error = new Error(`${reason}(HTTP ${status})${serverText ? ` · ${serverText}` : ''}`);
+    error.status = status;
+    error.responseBody = body;
+    return error;
+  }
+
+  async function sendLlmRequest(payload, settings, maxTokens, onStatus) {
+    const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload, maxTokens });
+    const estimate = CaptureITAiBudget.estimateRequestTokens(adapterRequest.requestBody);
+    for (let attempt = 0; ; attempt += 1) {
+      await waitForTokenBudget(estimate, onStatus);
+      const entry = tokenBudget.record(estimate, Date.now());
+      onStatus(attempt ? `다시 보내는 중(${attempt}번째)` : 'AI 응답 기다리는 중');
+      const response = await fetchLlm(adapterRequest.url, adapterRequest.options);
+      const body = await responseBody(response);
+      const actual = CaptureITAiBudget.usageTokens(body);
+      if (actual) entry.tokens = actual;
+      if (response.ok) {
+        await setLlmReady(true);
+        return CaptureITLlm.parseAdapterResponse(body);
+      }
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt >= 2) throw llmHttpError(response, body);
+      // 한도에 걸렸으면 이번 1분은 다 쓴 것으로 보고 기다린다.
+      const retryAfter = response.headers && response.headers.get && response.headers.get('retry-after');
+      // 서버가 언제 다시 보내라고 알려 주면 그 말을 따르고, 안 알려 주면 이번 1분은 다 쓴 것으로 본다.
+      if (response.status === 429 && !retryAfter) tokenBudget.exhaust(entry);
+      const waitUntil = Date.now() + CaptureITAiBudget.retryDelayMs(retryAfter, attempt, response.status);
+      while (Date.now() < waitUntil) {
+        const seconds = Math.ceil((waitUntil - Date.now()) / 1000);
+        onStatus(response.status === 429
+          ? `한도에 걸려 ${seconds}초 뒤 다시 보냄(한도는 1분 단위로 풀림)`
+          : `서버 오류로 ${seconds}초 뒤 다시 보냄`);
+        await sleep(Math.min(1000, waitUntil - Date.now()));
+      }
+    }
   }
 
   // 답이 출력 한도에 걸려 비었거나 끊겼으면 한도를 늘려 한 번 더 요청한다.
-  async function postLlm(payload) {
-    await saveLlmSettings();
-    const settings = readLlmSettings();
-    try {
-      return await postLlmOnce(payload, settings, CaptureITLlm.DEFAULT_MAX_TOKENS);
-    } catch (error) {
-      if (!error.outputLimit) throw error;
-      return postLlmOnce(payload, settings, CaptureITLlm.RETRY_MAX_TOKENS);
-    }
+  // onStatus(text): 진행 상태(대기·재시도 등)를 카드와 상태 줄에 보여 준다.
+  // 이미지를 못 읽는 것으로 확인된 모델 이름들(저장해 두고 다음부터는 글자만 보낸다).
+  const textOnlyModels = new Set();
+
+  function currentModelIsTextOnly() {
+    return textOnlyModels.has(elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL);
+  }
+
+  // AI 설정에 "이 모델은 이미지를 못 읽어 글자만 보냄"을 계속 보여 주고, 잘못 기억했으면 지울 수 있게 한다.
+  function renderTextOnlyModels() {
+    const model = elements.llmModel.value.trim() || CaptureITLlm.DEFAULT_MODEL;
+    elements.llmTextOnly.hidden = !textOnlyModels.has(model);
+    if (elements.llmTextOnly.hidden) return;
+    const clear = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button', textContent: '다시 이미지 보내 보기' });
+    clear.addEventListener('click', async () => {
+      textOnlyModels.delete(model);
+      await extensionStorage.set({ llmTextOnlyModels: [...textOnlyModels] }).catch(() => {});
+      renderTextOnlyModels();
+    });
+    elements.llmTextOnly.replaceChildren(`'${model}'은(는) 화면 이미지를 읽지 못해 글자만 보내고 있습니다. 화면까지 보게 하려면 이미지를 읽는 모델(예: multimodal)을 쓰세요. `, clear);
+  }
+
+  async function rememberTextOnlyModel(model) {
+    if (textOnlyModels.has(model)) return;
+    textOnlyModels.add(model);
+    await extensionStorage.set({ llmTextOnlyModels: [...textOnlyModels] }).catch(() => {});
+    renderTextOnlyModels();
+    setMessage(`'${model}' 모델은 화면 이미지를 읽지 못하는 것 같아 글자로만 보냈습니다. 화면까지 보게 하려면 ⋮ → AI 설정에서 이미지를 읽는 모델(예: multimodal)로 바꾸세요.`, true);
+  }
+
+  function postLlm(payload, options = {}) {
+    const onStatus = options.onStatus || (() => {});
+    llmQueued += 1;
+    if (llmQueued > 1) onStatus(`앞에 AI 요청 ${llmQueued - 1}건 대기`);
+    const run = async () => {
+      try {
+        await saveLlmSettings();
+        const settings = readLlmSettings();
+        const send = async (body) => {
+          try {
+            return await sendLlmRequest(body, settings, CaptureITLlm.DEFAULT_MAX_TOKENS, onStatus);
+          } catch (error) {
+            if (!error.outputLimit) throw error;
+            onStatus('답이 길어 한도를 늘려 다시 요청');
+            return sendLlmRequest(body, settings, CaptureITLlm.RETRY_MAX_TOKENS, onStatus);
+          }
+        };
+        // 이미지를 못 읽는 모델은 "이미지 지원 안 함" 오류를 준다. 그런 모델로 알려졌으면 처음부터 글자만 보내고,
+        // 처음 겪으면 글자만으로 한 번 더 보낸 뒤 기억한다.
+        if (textOnlyModels.has(settings.model) && CaptureITAiBudget.hasImages(payload)) {
+          onStatus('이미지 없이 글자만 보냄(이미지를 못 읽는 모델)');
+          return send(CaptureITAiBudget.stripImages(payload));
+        }
+        try {
+          return await send(payload);
+        } catch (error) {
+          // 서버가 이미지를 지원하지 않는다고 분명히 말했을 때만 글자로 다시 보낸다(한도·크기 등 다른 실패는 그대로 알린다).
+          const bodyText = JSON.stringify(error.responseBody || '');
+          if (!CaptureITAiBudget.hasImages(payload) || !CaptureITAiBudget.looksLikeImageUnsupported(error.status, bodyText)) throw error;
+          onStatus('이미지를 빼고 다시 보내는 중');
+          const result = await send(CaptureITAiBudget.stripImages(payload));
+          await rememberTextOnlyModel(settings.model);
+          return result;
+        }
+      } finally {
+        llmQueued -= 1;
+      }
+    };
+    const result = llmChain.then(run, run);
+    llmChain = result.catch(() => {});
+    return result;
   }
 
   function diagnosticFeature() {
@@ -3042,32 +3177,34 @@
     return redactedRequest;
   }
 
+  // 1단계 후보: 모르는 증적은 버리고 아는 것만 쓴다(하나만 틀려도 통째로 실패하던 것을 고침).
   function validateCandidateIds(response) {
-    if (!response || !Array.isArray(response.candidateCaptureIds) || response.candidateCaptureIds.length === 0) {
-      throw new Error('LLM이 유효한 후보 증적을 반환하지 않았습니다.');
-    }
+    const ids = response && Array.isArray(response.candidateCaptureIds) ? response.candidateCaptureIds : [];
     const known = new Set(editorState.evidence.map((item) => item.id));
-    return [...new Set(response.candidateCaptureIds.map((id) => {
-      if (typeof id !== 'string' || !known.has(id)) throw new Error(`알 수 없는 후보 증적입니다: ${id}`);
-      return id;
-    }))];
+    const kept = [...new Set(ids.filter((id) => typeof id === 'string' && known.has(id)))];
+    if (kept.length === 0) throw new Error('AI가 고른 후보 증적 중 이 보고서에 있는 것이 없습니다.');
+    return kept;
   }
 
   // targetFeature를 명시적으로 받도록 리팩터링했다 - 기존 "증적 설명 생성" 버튼은 항상
   // currentFeature()를 대상으로 호출하고(요청 시점), Auto_Recommend_On_Map(그래프가 테스트케이스에
   // 매핑되는 순간 자동으로 호출)은 매핑된 feature를 직접 넘겨준다(그 시점에 currentFeature()가
   // 반드시 그 feature와 같다는 보장이 없으므로 - 예: 다른 카드가 선택된 상태에서 드래그로 매핑).
-  async function requestRecommendations(targetFeature = currentFeature()) {
+  async function requestRecommendations(targetFeature = currentFeature(), options = {}) {
     const feature = targetFeature;
+    const onStatus = options.onStatus || (() => {});
     if (!feature) throw new Error(`${itemWord('을/를')} 고르세요.`);
     if (editorState.evidence.length === 0) throw new Error('추천할 증적이 없습니다.');
     const isCurrentFeature = feature.id === (currentFeature() && currentFeature().id);
     if (isCurrentFeature) elements.requestRecommendations.disabled = true;
-    setMessage('1단계: 캡처 맥락과 순서로 후보를 선정하고 있습니다.');
+    const status = (stage) => (text) => onStatus(`${stage} · ${text}`);
+    setMessage('증적 설명 1/2: 화면 맥락과 순서로 후보를 고르고 있습니다.');
+    onStatus('1/2 후보 고르는 중');
     try {
       const stageOne = CaptureITLlm.buildStageOne(feature, editorState.evidence, report && report.changePurpose || '');
-      const candidateIds = validateCandidateIds(await postLlm(stageOne));
-      setMessage('2단계: 후보와 인접 이미지로 최종 증적을 추천하고 있습니다.');
+      const candidateIds = validateCandidateIds(await postLlm(stageOne, { onStatus: status('1/2 후보') }));
+      setMessage('증적 설명 2/2: 후보 화면을 보며 고르고 있습니다.');
+      onStatus('2/2 화면 보며 고르는 중');
       for (const evidence of candidateAndAdjacentEvidence(candidateIds)) await ensureThumbnail(evidence);
       // Bug_Context_Length_Exceeded 대응: 후보+인접 evidence 수가 많으면 이미지를 전부 payload에
       // 실었을 때 LLM의 컨텍스트 한도(HTTP 400)를 넘길 수 있으므로, 기존 recordingPolicy의
@@ -3076,14 +3213,15 @@
         || CaptureITDomain.defaultRecordingPolicy().maxLlmImagesPerFeature;
       const stageTwo = CaptureITLlm.buildStageTwo(feature, editorState.evidence, candidateIds, report && report.changePurpose || '', { maxImages });
       const validated = CaptureITLlm.validateRecommendations(
-        await postLlm(stageTwo),
+        await postLlm(stageTwo, { onStatus: status('2/2 화면') }),
         new Set(editorState.evidence.map((item) => item.id)),
       );
-      if (validated.featureSpecId !== feature.id) throw new Error(`다른 ${itemWord()}의 추천 결과가 돌아왔습니다.`);
+      // 응답에 적힌 항목 id가 달라도 우리가 물어본 항목의 추천으로 쓴다(모델이 id를 바꿔 적는 경우가 있다).
       feature.recommendations = validated.suggestions;
       await saveReport();
       renderRecommendations();
-      setMessage(`${validated.suggestions.length}개 증적을 추천했습니다. 연결 여부와 PASS/FAIL은 사용자가 결정합니다.`);
+      const droppedNote = validated.dropped && validated.dropped.length ? ` (AI가 잘못 적은 ${validated.dropped.length}건은 뺐습니다)` : '';
+      setMessage(`${validated.suggestions.length}개 증적을 추천했습니다${droppedNote}. 연결 여부와 판정은 직접 정합니다.`);
     } finally {
       if (isCurrentFeature) elements.requestRecommendations.disabled = false;
     }
@@ -3108,26 +3246,36 @@
 
   // feature-item 목록에 진행 중인 파이프라인 정보를 표시하기 위한 상태를 만든다. renderFeatures()가
   // 이 상태를 읽어 해당 feature 카드에 ai-generating 클래스(무지개 그라데이션)와 체크리스트를 그린다.
-  function startAiPipeline(featureId) {
+  function startAiPipeline(featureId, firstStatus = 'active', detail = '') {
     clearTimeout(aiPipelineClearTimers.get(featureId));
     aiPipelineClearTimers.delete(featureId);
     aiPipelines.set(featureId, {
       featureId,
       steps: [
-        { key: 'recommendations', label: AI_PIPELINE_STEP_LABELS.recommendations, status: 'active' },
-        { key: 'description', label: AI_PIPELINE_STEP_LABELS.description, status: 'pending' },
+        { key: 'recommendations', label: AI_PIPELINE_STEP_LABELS.recommendations, status: firstStatus, detail },
+        { key: 'description', label: `${docType().descriptionLabel} 초안`, status: 'pending', detail: '' },
       ],
     });
     renderFeatures();
   }
 
-  // 완료된 체크리스트(✓✓)를 사용자가 잠깐 볼 수 있게 남겨둔 뒤 일정 시간 후 지운다.
+  function setAiPipelineStepDetail(featureId, stepKey, detail) {
+    const pipeline = aiPipelines.get(featureId);
+    const step = pipeline && pipeline.steps.find((item) => item.key === stepKey);
+    if (!step || step.detail === detail) return;
+    step.detail = detail;
+    renderFeatures();
+  }
+
+  // 완료된 체크리스트(✓✓)는 잠깐 보여 주고 지운다. 실패가 있으면 이유를 읽을 수 있게 더 오래 남긴다.
   function finishAiPipeline(featureId) {
+    const pipeline = aiPipelines.get(featureId);
+    const failed = Boolean(pipeline && pipeline.steps.some((step) => step.status === 'error'));
     aiPipelineClearTimers.set(featureId, setTimeout(() => {
       aiPipelines.delete(featureId);
       aiPipelineClearTimers.delete(featureId);
       renderFeatures();
-    }, 2500));
+    }, failed ? 20000 : 2500));
   }
 
   // 두 LLM 호출을 순서대로 실행한다: 1단계(증적 설명 생성)가 끝나야 2단계(테스트케이스 설명
@@ -3136,29 +3284,53 @@
   async function runAutoAiPipeline(feature) {
     startAiPipeline(feature.id);
     try {
-      await requestRecommendations(feature);
+      await requestRecommendations(feature, { onStatus: (text) => setAiPipelineStepDetail(feature.id, 'recommendations', text) });
       setAiPipelineStepStatus(feature.id, 'recommendations', 'done');
+      setAiPipelineStepDetail(feature.id, 'recommendations', currentModelIsTextOnly() ? '이미지 없이 글자만으로' : '');
     } catch (error) {
       setAiPipelineStepStatus(feature.id, 'recommendations', 'error');
+      setAiPipelineStepDetail(feature.id, 'recommendations', error.message);
       setMessage(`증적 설명 자동 생성 실패: ${error.message}`, true);
     }
     setAiPipelineStepStatus(feature.id, 'description', 'active');
-    // requestTestCaseDescription은 postLlm 실패 시 내부에서 이미 setMessage로 알리고 null을
-    // 반환하지만(throw하지 않음), 매핑된 증적이 없는 등 사전 조건 실패는 여전히 throw할 수 있으므로
-    // 여기서도 방어적으로 감싼다.
     try {
-      const descriptionResult = await requestTestCaseDescription(feature);
-      setAiPipelineStepStatus(feature.id, 'description', descriptionResult ? 'done' : 'error');
+      await requestTestCaseDescription(feature, { throwOnError: true, onStatus: (text) => setAiPipelineStepDetail(feature.id, 'description', text) });
+      setAiPipelineStepStatus(feature.id, 'description', 'done');
+      setAiPipelineStepDetail(feature.id, 'description', currentModelIsTextOnly() ? '이미지 없이 글자만으로' : '');
     } catch (error) {
       setAiPipelineStepStatus(feature.id, 'description', 'error');
+      setAiPipelineStepDetail(feature.id, 'description', error.message);
       setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true);
     }
     finishAiPipeline(feature.id);
   }
 
+  // 연결을 여러 번 빨리 누르면 누를 때마다 AI를 돌리지 않고, 마지막 연결 뒤 잠깐 기다렸다가 한 번만 돌린다.
+  // 이미 돌고 있으면 끝난 뒤 한 번 더 돌린다(그사이 연결된 증적까지 반영). 예전에는 10번 누르면 10번이 동시에 돌았다.
+  const AI_PIPELINE_SETTLE_MS = 2500;
+  const pipelineTimers = new Map();
+  const pipelineRunning = new Set();
+  const pipelineRerun = new Set();
+
   function autoRunAiPipelineForFeature(feature) {
     if (!llmReady) return;
-    runAutoAiPipeline(feature).catch(() => {});
+    const featureId = feature.id;
+    if (pipelineRunning.has(featureId)) {
+      pipelineRerun.add(featureId);
+      return;
+    }
+    clearTimeout(pipelineTimers.get(featureId));
+    startAiPipeline(featureId, 'pending', '연결이 끝나면 시작');
+    pipelineTimers.set(featureId, setTimeout(() => {
+      pipelineTimers.delete(featureId);
+      const current = editorState.features.find((item) => item.id === featureId);
+      if (!current) return;
+      pipelineRunning.add(featureId);
+      runAutoAiPipeline(current).catch(() => {}).finally(() => {
+        pipelineRunning.delete(featureId);
+        if (pipelineRerun.delete(featureId)) autoRunAiPipelineForFeature(current);
+      });
+    }, AI_PIPELINE_SETTLE_MS));
   }
 
   async function setLlmReady(value) {
@@ -3232,7 +3404,9 @@
     };
   }
 
-  async function requestTestCaseDescription(feature) {
+  async function requestTestCaseDescription(feature, options = {}) {
+    const onStatus = options.onStatus || (() => {});
+    const throwOnError = Boolean(options.throwOnError);
     if (!feature) throw new Error(`${itemWord('을/를')} 고르세요.`);
     const evidenceItems = evidenceForFeature(feature);
     if (evidenceItems.length === 0) throw new Error(`${itemWord()}에 연결된 증적이 없습니다.`);
@@ -3251,7 +3425,8 @@
         }),
         evidencePacket,
       };
-      const validated = CaptureITLlm.validateTestCaseDescriptionResponse(await postLlm(request));
+      onStatus('화면 보며 쓰는 중');
+      const validated = CaptureITLlm.validateTestCaseDescriptionResponse(await postLlm(request, { onStatus }));
       applyTestCaseDescription(feature, validated);
       await saveReport();
       renderFeatures();
@@ -3262,6 +3437,7 @@
         : '비어 있던 칸을 AI 초안으로 채웠습니다. 판정은 직접 선택하세요.');
       return validated;
     } catch (error) {
+      if (throwOnError) throw error;
       setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true);
       return null;
     }
@@ -3611,6 +3787,8 @@
       'llmEndpoint',
       'llmModel',
       'llmTemplate',
+      'llmTokensPerMinuteByModel',
+      'llmTextOnlyModels',
       'preferredReportTemplate',
       'preferredDocumentType',
       'pointerMarker',
@@ -3626,6 +3804,10 @@
     elements.llmApiKey.value = stored.llmApiKey || '';
     elements.llmEndpoint.value = stored.llmEndpoint || CaptureITLlm.DEFAULT_ENDPOINT;
     elements.llmModel.value = stored.llmModel || CaptureITLlm.DEFAULT_MODEL;
+    tokensPerMinuteByModel = stored.llmTokensPerMinuteByModel || {};
+    for (const model of stored.llmTextOnlyModels || []) textOnlyModels.add(model);
+    showTokensPerMinuteForModel();
+    renderTextOnlyModels();
     elements.llmTemplate.value = stored.llmTemplate || '';
     // 저장된 adapter가 nh-ai-gateway/openai-compatible이면 엔드포인트를 그 Adapter의 고정
     // 기본값으로 다시 맞추고 잠근다(저장된 llmEndpoint가 과거에 잘못 입력된 값이었더라도
@@ -3765,7 +3947,9 @@
       setMessage(`LLM 설정 실패: ${error.message}`, true);
     }
   };
-  for (const input of [elements.llmEndpoint, elements.llmApiKey, elements.llmModel, elements.llmTemplate]) {
+  // 모델을 바꾸면 그 모델의 분당 한도를 보여 준다. 이미지 못 읽음 기록도 그 모델 것만 쓴다.
+  elements.llmModel.addEventListener('input', () => { showTokensPerMinuteForModel(); renderTextOnlyModels(); });
+  for (const input of [elements.llmEndpoint, elements.llmApiKey, elements.llmModel, elements.llmTemplate, elements.llmTpm]) {
     input.addEventListener('change', persistLlmSettings);
   }
   // NH AI Gateway는 내부망 liteLLM 게이트웨이, OpenAI compatible은 외부망 공식 OpenAI API를
@@ -3782,8 +3966,8 @@
 
   elements.testLlmConnection.addEventListener('click', () => runLlmDiagnostic('connection').catch((error) => setMessage(`LLM 연결 테스트 실패: ${error.message}`, true)));
   elements.testLlmRecommendation.addEventListener('click', () => runLlmDiagnostic('recommendation').catch((error) => setMessage(`LLM 추천 테스트 실패: ${error.message}`, true)));
-  elements.requestRecommendations.addEventListener('click', () => withBusy(elements.requestRecommendations, 'AI가 보는 중…', () => requestRecommendations()).catch((error) => setMessage(`추천 실패: ${error.message}`, true)));
-  elements.requestTestCaseDescriptionButton.addEventListener('click', () => withBusy(elements.requestTestCaseDescriptionButton, 'AI가 쓰는 중…', () => requestTestCaseDescription(currentFeature())).catch((error) => setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true)));
+  elements.requestRecommendations.addEventListener('click', () => withBusy(elements.requestRecommendations, 'AI가 보는 중…', () => requestRecommendations(currentFeature(), { onStatus: (text) => setMessage(`증적 추천 · ${text}`) })).catch((error) => setMessage(`추천 실패: ${error.message}`, true)));
+  elements.requestTestCaseDescriptionButton.addEventListener('click', () => withBusy(elements.requestTestCaseDescriptionButton, 'AI가 쓰는 중…', () => requestTestCaseDescription(currentFeature(), { onStatus: (text) => setMessage(`${docType().descriptionLabel} 초안 · ${text}`) })).catch((error) => setMessage(`${docType().descriptionLabel} 초안 실패: ${error.message}`, true)));
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
       if (message && message.type === 'EVIDENCE_CREATED') refreshEvidence().catch(() => {});
