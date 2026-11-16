@@ -112,7 +112,7 @@ test('renderFeature는 evidenceIds 매핑 여부에 따라 서로 다른 feature
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요\. 이 테스트케이스가 골라져 있으면 바로 연결됩니다\.'/,
     '매핑된 증적이 없으면 매핑 유도 문구를 textContent에 설정해야 한다',
   );
   assert.match(

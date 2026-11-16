@@ -104,6 +104,7 @@
     toggleView: byId('toggle-view'),
     recordTarget: byId('record-target'),
     captureTarget: byId('capture-target'),
+    linkTarget: byId('link-target'),
     storageDetailDialog: byId('storage-detail-dialog'),
     storageEvidenceCount: byId('storage-evidence-count'),
     storageLastExportName: byId('storage-last-export-name'),
@@ -502,21 +503,6 @@
       if (event.target.closest('.feature-title-row')) selectFeature(feature.id);
       else if (currentFeatureId !== feature.id) selectFeature(feature.id);
     });
-    // 증적(세트)을 카드에 끌어다 놓으면 이 테스트케이스에 연결한다.
-    card.addEventListener('dragover', (event) => {
-      if (!draggedEvidenceIdsType(event)) return;
-      event.preventDefault();
-      card.classList.add('drop-hover');
-    });
-    card.addEventListener('dragleave', () => card.classList.remove('drop-hover'));
-    card.addEventListener('drop', (event) => {
-      card.classList.remove('drop-hover');
-      const evidenceIds = readDraggedEvidenceIds(event);
-      if (!evidenceIds) return;
-      event.preventDefault();
-      currentFeatureId = feature.id;
-      mapEvidenceIdsWithConfirm(evidenceIds, feature).catch((error) => setMessage(error.message, true));
-    });
     const header = document.createElement('div');
     header.className = 'feature-title-row';
     const indexLabel = document.createElement('span');
@@ -760,7 +746,7 @@
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = '증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요.';
+      elements.featureMappingGuidance.textContent = '증적 수집함에서 증적이나 세트의 연결 버튼을 누르세요. 이 테스트케이스가 골라져 있으면 바로 연결됩니다.';
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -1023,11 +1009,6 @@
     const node = document.createElement('article');
     node.className = 'capture-node';
     node.dataset.evidenceId = evidence.id;
-    node.draggable = true;
-    node.addEventListener('dragstart', (event) => {
-      event.stopPropagation();
-      event.dataTransfer.setData('application/x-captureit-evidence-ids', JSON.stringify([evidence.id]));
-    });
     node.addEventListener('mouseenter', () => showNodeContextPreview(node, evidence));
     node.addEventListener('mouseleave', () => hideNodeContextPreview());
     node.addEventListener('dblclick', (event) => {
@@ -1098,18 +1079,6 @@
       // 그래프(세션) 카드 헤더 색상도 현재 선택된 테스트케이스와의 연관 여부로 구분한다.
       card.classList.add(currentFeatureId && mappedFeatureIds.includes(currentFeatureId) ? 'active' : 'inactive');
     }
-    card.draggable = true;
-    card.addEventListener('dragstart', (event) => {
-      // 드래그 아예 끄자: 제목 입력란(또는 다른 input/textarea) 안에서 시작된 상호작용은
-      // 카드 전체를 드래그하지 않아야 한다 - 텍스트 선택 제스처가 이벤트 버블링으로 이 카드의
-      // dragstart로 올라오는 경우를 여기서 한 번 더 막는다(titleInput 자체의 draggable=false와
-      // dragstart preventDefault에 더한 안전망).
-      if (event.target.closest('input, textarea')) {
-        event.preventDefault();
-        return;
-      }
-      event.dataTransfer.setData('application/x-captureit-evidence-ids', JSON.stringify(group.evidenceIds));
-    });
     card.addEventListener('dblclick', (event) => {
       if (isButtonTarget(event)) return;
       openQuickMappingDialog(group.evidenceIds);
@@ -1127,10 +1096,6 @@
     titleInput.className = 'capture-graph-title-input';
     titleInput.value = group.sessionLabel || group.llmSessionLabel || '';
     titleInput.placeholder = defaultTitle;
-    // 드래그 아예 끄자: 이 입력란에서 텍스트를 선택/편집하는 제스처가 조상(card)의
-    // draggable=true로 인해 카드 전체 드래그로 이어지지 않도록 입력란 자체의 드래그를 끈다.
-    titleInput.setAttribute('draggable', 'false');
-    titleInput.addEventListener('dragstart', (event) => event.preventDefault());
     titleInput.addEventListener('mousedown', (event) => event.stopPropagation());
     titleInput.addEventListener('click', (event) => event.stopPropagation());
     titleInput.addEventListener('dblclick', (event) => event.stopPropagation());
@@ -1325,6 +1290,20 @@
     elements.recentEvidence.replaceChildren(button);
   }
 
+  // 끌어다 놓기가 막힌 환경에서는 연결 버튼이 유일한 연결 방법이다. 누르면 어디로 연결되는지 미리 알려 준다.
+  function renderLinkTarget() {
+    const feature = currentFeature();
+    elements.linkTarget.hidden = editorState.evidence.length === 0;
+    if (feature) {
+      const index = editorState.features.indexOf(feature) + 1;
+      elements.linkTarget.replaceChildren('연결 버튼을 누르면 → ', Object.assign(document.createElement('strong'), { textContent: `${index}. ${feature.title || '제목 없는 테스트케이스'}` }));
+    } else {
+      elements.linkTarget.textContent = editorState.features.length === 0
+        ? '연결 버튼을 누르면 테스트케이스를 새로 만들어 연결합니다.'
+        : '연결 버튼을 누른 뒤 연결할 테스트케이스를 고르세요.';
+    }
+  }
+
   function renderEvidence() {
     // 리렌더링으로 DOM이 교체되면 이전에 hover 상태였던 프리뷰가 고아 상태로 남을 수 있으므로 항상 숨긴다.
     hideNodeContextPreview();
@@ -1340,6 +1319,7 @@
       .filter(Boolean) : [];
     elements.mappedEvidence.replaceChildren(...mapped.map((item, index) => evidenceCard(item, true, index)));
     renderRecentEvidence();
+    renderLinkTarget();
     renderExportEvidenceButtons();
     scheduleMappingLinks();
   }
@@ -1614,7 +1594,7 @@
     if (recording) messages.push('테스트 화면을 평소처럼 조작하세요. 주요 화면이 자동으로 수집됩니다.');
     else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
     else if (featureCount === 0) messages.push('증적 세트의 연결 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다.');
-    else if (unmappedFeatures > 0) messages.push(`증적이 없는 테스트케이스가 ${unmappedFeatures}개 있습니다. 테스트케이스를 고른 뒤 증적의 연결 버튼을 누르거나, 증적 세트를 카드로 끌어다 놓으세요.`);
+    else if (unmappedFeatures > 0) messages.push(`증적이 없는 테스트케이스가 ${unmappedFeatures}개 있습니다. 테스트케이스를 고른 뒤 증적의 연결 버튼을 누르세요.`);
     else if (unjudged > 0) messages.push(`판정하지 않은 테스트케이스가 ${unjudged}개 있습니다.`);
     else messages.push('모두 판정했습니다. 내보내기를 누르세요.');
     if (elements.reportDraftSuggestionDialog.open) {
@@ -2060,34 +2040,6 @@
     if (mappedFeature) autoRunAiPipelineForFeature(mappedFeature);
   }
 
-  // 드래그된 데이터가 CaptureIT evidence-ids 페이로드인지 확인한다(이미지 파일 드롭 등 다른 종류의 드래그와 구분).
-  function draggedEvidenceIdsType(event) {
-    return Boolean(event.dataTransfer && Array.from(event.dataTransfer.types || []).includes('application/x-captureit-evidence-ids'));
-  }
-
-  // dataTransfer에서 evidence-ids 배열을 안전하게 읽는다. 파싱 실패/빈 배열이면 null을 반환한다.
-  function readDraggedEvidenceIds(event) {
-    const raw = event.dataTransfer.getData('application/x-captureit-evidence-ids');
-    if (!raw) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
-  }
-
-  async function dropEvidenceIdsOnFeature(event) {
-    event.preventDefault();
-    elements.mappedEvidence.classList.remove('dragover');
-    const evidenceIds = readDraggedEvidenceIds(event);
-    if (!evidenceIds) return;
-    const feature = await featureForMapping();
-    if (!feature) return;
-    await mapEvidenceIdsWithConfirm(evidenceIds, feature);
-  }
-
   async function removeEvidence(evidenceId) {
     if (!confirm('이 사진을 증적에서 완전히 삭제할까요? 되돌릴 수 없습니다.\n테스트케이스 연결만 끊으려면 "연결 해제"를 누르세요.')) return false;
     for (const feature of editorState.features) {
@@ -2365,7 +2317,7 @@
     }
   }
 
-  // 모든 외부 이미지 입력(파일 선택, 끌어다 놓기, 붙여넣기)이 이 함수 하나로 증적이 된다.
+  // 모든 외부 이미지 입력(파일 선택, 붙여넣기, 되는 PC에서는 파일 끌어다 놓기)이 이 함수 하나로 증적이 된다.
   // origin: 'file' | 'paste'. 붙여넣기는 출처를 file-import로 유지하고(manifest 구조 불변)
   // triggerType만 clipboard-paste로 구분한다. 수집 시각은 붙여넣은 시각이다.
   async function importImages(files, origin = 'file') {
@@ -2479,7 +2431,7 @@
       : '자동 수집이 안 되는 화면은 캡처해서 여기에 Ctrl+V';
     elements.pasteZoneHint.textContent = unavailable
       ? 'IE 모드 화면 등은 클릭이 기록되지 않습니다. 화면을 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요.'
-      : '다른 브라우저나 IE 모드 화면은 Win+Shift+S로 캡처한 뒤 이 창을 누르고 Ctrl+V 하세요. 이미지 파일은 어디에나 끌어다 놓으면 됩니다.';
+      : '다른 브라우저나 IE 모드 화면은 Win+Shift+S로 캡처한 뒤 이 창을 누르고 Ctrl+V 하세요. 저장해 둔 이미지는 "이미지 불러오기"로 넣습니다.';
   }
 
   function renderExportEvidenceButtons() {
@@ -3409,7 +3361,8 @@
       elements.imageImport.click();
     });
   }
-  // 붙여넣기와 파일 끌어다 놓기는 작업대 전체에서 받는다(단계와 무관).
+  // 붙여넣기는 작업대 전체에서 받는다. 사내 DRM이 끌어다 놓기를 막으므로 화면 안내는 붙여넣기와
+  // "이미지 불러오기"만 한다. 파일 드롭은 막히지 않은 PC를 위해 조용히 받아 둔다.
   document.addEventListener('paste', handlePaste);
   document.addEventListener('dragover', (event) => {
     if (!draggedFiles(event)) return;
@@ -3433,26 +3386,6 @@
       setPendingMapping(null);
       setMessage('연결을 취소했습니다.');
     }
-  });
-  for (const eventName of ['dragenter', 'dragover']) {
-    elements.evidenceDropZone.addEventListener(eventName, (event) => { event.preventDefault(); elements.evidenceDropZone.classList.add('dragging'); });
-  }
-  for (const eventName of ['dragleave', 'drop']) {
-    elements.evidenceDropZone.addEventListener(eventName, (event) => { event.preventDefault(); elements.evidenceDropZone.classList.remove('dragging'); });
-  }
-  for (const eventName of ['dragenter', 'dragover']) {
-    elements.mappedEvidence.addEventListener(eventName, (event) => {
-      if (!draggedEvidenceIdsType(event)) return;
-      event.preventDefault();
-      elements.mappedEvidence.classList.add('dragover');
-    });
-  }
-  elements.mappedEvidence.addEventListener('dragleave', (event) => {
-    event.preventDefault();
-    elements.mappedEvidence.classList.remove('dragover');
-  });
-  elements.mappedEvidence.addEventListener('drop', (event) => {
-    dropEvidenceIdsOnFeature(event).catch((error) => setMessage(error.message, true));
   });
   elements.openViewer.addEventListener('click', openViewerPage);
   elements.exportReport.addEventListener('click', () => exportReport().catch((error) => setMessage(`보고서 생성 실패: ${error.message}`, true)));

@@ -48,7 +48,7 @@
     <p id="capture-target" class="capture-meta capture-target" hidden></p>
     <div id="paste-zone" class="paste-zone" aria-live="polite">
       <strong id="paste-zone-title">자동 수집이 안 되는 화면은 캡처해서 여기에 Ctrl+V</strong>
-      <span id="paste-zone-hint">다른 브라우저나 IE 모드 화면은 캡처(Win+Shift+S)한 뒤 여기서 Ctrl+V. 이미지 파일은 어디에나 끌어다 놓으면 됩니다.</span>
+      <span id="paste-zone-hint">다른 브라우저나 IE 모드 화면은 Win+Shift+S로 캡처한 뒤 이 창을 누르고 Ctrl+V 하세요. 저장해 둔 이미지는 "이미지 불러오기"로 넣습니다.</span>
     </div>
     <p class="capture-meta capture-shortcut-hint">중요한 영역은 Ctrl+Shift+클릭으로 직접 지정할 수 있습니다.</p>
     <div id="recent-evidence" class="recent-evidence" aria-live="polite"></div>
@@ -68,6 +68,7 @@
           <button id="clean-duplicates" class="text-button" type="button" title="같은 화면이 연달아 찍힌 증적을 하나로 합칩니다">중복 정리</button>
         </div>
         <input id="evidence-search" class="search" type="search" placeholder="화면 이름, 누른 버튼으로 찾기" aria-label="증적 검색">
+        <p id="link-target" class="link-target" aria-live="polite"></p>
         <div id="evidence-inbox" class="evidence-list" aria-live="polite"></div>
       </section>
       <section class="pane feature-panel" aria-labelledby="feature-list-heading">

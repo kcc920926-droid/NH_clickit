@@ -191,33 +191,14 @@ test('renderEvidence는 리렌더링 시작 시 hideNodeContextPreview를 호출
     'renderEvidence는 재렌더링 시작 부분에서 hideNodeContextPreview를 호출해야 합니다');
 });
 
-// 드래그 아예 끄자: 세트 제목 입력란 안에서 텍스트를 드래그/선택하는 제스처가 조상 카드(draggable=true)의
-// dragstart로 번져 카드 전체가 드래그되는 회귀를 막는다.
-test('captureGraphCard의 제목 입력란은 드래그가 완전히 꺼져 있고, 카드 dragstart는 input/textarea 안에서 시작된 이벤트를 무시한다', () => {
-  const script = readEditorScript();
-  const captureGraphCardBody = extractFunctionBody(script, 'captureGraphCard');
-
-  assert.match(
-    captureGraphCardBody,
-    /titleInput\.setAttribute\('draggable',\s*'false'\)/,
-    '제목 입력란은 draggable을 false로 명시해야 한다',
-  );
-  assert.match(
-    captureGraphCardBody,
-    /titleInput\.addEventListener\('dragstart',\s*\(event\)\s*=>\s*event\.preventDefault\(\)\)/,
-    '제목 입력란은 자신의 dragstart를 preventDefault로 막아야 한다',
-  );
-  assert.match(
-    captureGraphCardBody,
-    /titleInput\.addEventListener\('mousedown',\s*\(event\)\s*=>\s*event\.stopPropagation\(\)\)/,
-    '제목 입력란의 mousedown은 카드로 전파되지 않아야 한다',
-  );
-
-  const dragstartIndex = captureGraphCardBody.indexOf("card.addEventListener('dragstart'");
-  assert.ok(dragstartIndex !== -1, "카드의 dragstart 리스너가 있어야 한다");
-  const guardIndex = captureGraphCardBody.indexOf("event.target.closest('input, textarea')");
-  const setDataIndex = captureGraphCardBody.indexOf('event.dataTransfer.setData(');
-  assert.ok(guardIndex !== -1, '카드 dragstart 핸들러는 input/textarea 가드를 가져야 한다');
-  assert.ok(guardIndex > dragstartIndex, '가드는 dragstart 리스너 내부에 있어야 한다');
-  assert.ok(guardIndex < setDataIndex, '가드는 setData 호출보다 먼저 실행되어야 한다');
+// 사내 DRM이 끌어다 놓기를 막으므로 증적 세트·화면은 끌 수 있는 것처럼 보이지 않게 한다.
+test('증적 세트와 화면은 끌어다 놓기 대상이 아니고, 연결은 버튼으로 한다', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../extension/editor.css'), 'utf8');
+  const source = readEditorScript();
+  assert.doesNotMatch(source, /\.draggable = true/);
+  assert.doesNotMatch(source, /addEventListener\('dragstart'/);
+  assert.doesNotMatch(source, /application\/x-captureit-evidence-ids/);
+  assert.doesNotMatch(css, /cursor:\s*grab/);
+  assert.match(extractFunctionBody(source, 'captureGraphCard'), /mapToFeatureButton\(group\.evidenceIds\)/);
+  assert.match(extractFunctionBody(source, 'captureNode'), /mapToFeatureButton\(\[evidence\.id\]\)/);
 });

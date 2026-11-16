@@ -90,3 +90,12 @@ test('화면 문구에 이모지 아이콘을 쓰지 않는다', () => {
   for (const text of strings) assert.doesNotMatch(text, /🔗|✨|🚀/u, text);
   assert.doesNotMatch(html, /🔗|✨|🚀/u);
 });
+
+test('화면 안내는 끌어다 놓기 대신 붙여넣기·이미지 불러오기·연결 버튼만 말한다(사내 DRM)', () => {
+  const userText = [...editor.matchAll(/(['`])((?:(?!\1)[^\n])*)\1/g)].map((match) => match[2]).filter((text) => /[가-힣]/.test(text));
+  for (const text of userText) assert.doesNotMatch(text, /끌어다|드래그/, text);
+  assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), /끌어다|드래그/);
+  const body = functionBody(editor, 'renderLinkTarget');
+  assert.match(body, /'연결 버튼을 누르면 → '/);
+  assert.match(body, /'연결 버튼을 누른 뒤 연결할 테스트케이스를 고르세요\.'/);
+});

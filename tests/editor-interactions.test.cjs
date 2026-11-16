@@ -51,7 +51,7 @@ function extractCatchBlock(functionBody) {
 
 // Task 14.4: Drag_And_Drop_Mapping과 Alternative_Mapping_Control이 동일한 도메인 함수를 호출하는지 검증
 // _Requirements: 3.6_
-test('Drag_And_Drop_Mapping과 Alternative_Mapping_Control은 동일한 도메인 함수(mapEvidenceIds → CaptureITDomain.mapEvidenceBatch)를 호출한다', () => {
+test('연결 버튼과 고른 테스트케이스 연결은 동일한 도메인 함수(mapEvidenceIds → CaptureITDomain.mapEvidenceBatch)를 호출한다', () => {
   const mapEvidenceIdsBody = extractFunctionBody(source, 'mapEvidenceIds');
   assert.match(
     mapEvidenceIdsBody,
@@ -61,12 +61,9 @@ test('Drag_And_Drop_Mapping과 Alternative_Mapping_Control은 동일한 도메�
 
   // 둘 다 다른 테스트케이스에 연결된 사진을 옮길지 묻는 mapEvidenceIdsWithConfirm을 거쳐 mapEvidenceIds로 간다.
   assert.match(extractFunctionBody(source, 'mapEvidenceIdsWithConfirm'), /await mapEvidenceIds\(targetIds, feature\)/);
-  const dropBody = extractFunctionBody(source, 'dropEvidenceIdsOnFeature');
-  assert.match(
-    dropBody,
-    /\bmapEvidenceIdsWithConfirm\(/,
-    'Drag_And_Drop_Mapping 핸들러(dropEvidenceIdsOnFeature)는 mapEvidenceIds를 호출해야 한다',
-  );
+  // 사내 DRM이 끌어다 놓기를 막아 증적 → 테스트케이스 끌어다 놓기 연결은 없앴다. 연결 버튼과
+  // "다음에 누른 테스트케이스에 연결"(selectFeature)이 같은 경로를 탄다.
+  assert.match(extractFunctionBody(source, 'selectFeature'), /\bmapEvidenceIdsWithConfirm\(/);
 
   const mapToFeatureButtonBody = extractFunctionBody(source, 'mapToFeatureButton');
   assert.match(
