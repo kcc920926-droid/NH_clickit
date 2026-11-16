@@ -101,23 +101,18 @@ test('submitQuickMapping은 applyQuickMapping을 호출하고, 검증 에러 시
   );
 });
 
-// 판정 확인(Verdict_Confirmation) 단계 폐지: 판정 pill을 클릭하면 즉시
-// feature.result.status가 PASS -> FAIL -> N/A(null) 순으로 순환하며 확정된다.
-// 별도 확인 버튼이나 pending 상태 없이, 클릭 = 확정이다.
-test('cycleVerdict는 클릭 즉시 feature.result.status를 PASS -> FAIL -> N/A 순으로 순환시킨다', () => {
-  const body = extractFunctionBody(source, 'cycleVerdict');
-  assert.match(
-    body,
-    /feature\.result\.status\s*=\s*nextValue/,
-    'cycleVerdict는 다음 순환값을 feature.result.status에 즉시 대입해야 한다',
-  );
-  assert.match(source, /const VERDICT_CYCLE\s*=\s*\['PASS',\s*'FAIL',\s*null\]/, 'VERDICT_CYCLE은 PASS/FAIL/N/A 순서를 정의해야 한다');
+test('판정 버튼을 누르면 그 값이 바로 feature.result.status에 저장된다', () => {
+  const body = extractFunctionBody(source, 'setVerdict');
+  assert.match(body, /feature\.result\.status = value;/);
+  assert.match(body, /await saveReport\(\);/);
 });
 
-test('판정 pill은 verdictPill()로 생성되며 클릭 시 cycleVerdict를 호출한다', () => {
-  const body = extractFunctionBody(source, 'verdictPill');
-  assert.match(body, /feature-status-pill/, 'verdictPill은 feature-status-pill 클래스를 사용해야 한다');
-  assert.match(body, /cycleVerdict\(feature\)/, 'pill 클릭은 cycleVerdict를 호출해야 한다');
+test('판정 버튼 세 개는 verdictControl()로 만들고, AI 의견은 제목으로만 참고하게 한다', () => {
+  const body = extractFunctionBody(source, 'verdictControl');
+  assert.match(body, /for \(const verdict of VERDICTS\)/);
+  assert.match(body, /setVerdict\(feature, verdict\.value\)/);
+  assert.match(body, /button\.title = `AI 의견:/);
+  assert.doesNotMatch(body, /feature\.result\.status\s*=/, 'AI 의견이 판정을 바꾸지 않는다');
 });
 
 test('별도의 Verdict_Confirmation 확인 버튼/대기 상태 없이 pill 클릭이 곧 확정이다', () => {

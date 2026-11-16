@@ -8,6 +8,7 @@
     "contextMenus",
     "downloads",
     "scripting",
+    "sidePanel",
     "storage",
     "unlimitedStorage"
   ],
@@ -17,6 +18,9 @@
   "background": {
     "service_worker": "background.js",
     "type": "module"
+  },
+  "side_panel": {
+    "default_path": "editor.html"
   },
   "action": {
     "default_title": "CaptureIT",

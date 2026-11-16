@@ -182,12 +182,12 @@ test('편집기는 붙여넣기·창 전체 끌어다 놓기·중복 정리·증
   // 불러온 이미지는 편집기 창 크기가 아니라 이미지 원래 크기를 기준으로 자른다.
   assert.match(script, /const viewportSize = \{ width: loaded\.naturalWidth, height: loaded\.naturalHeight \}/);
 
-  for (const id of ['paste-zone', 'clean-duplicates', 'export-evidence-quick', 'export-evidence-completion']) {
+  for (const id of ['paste-zone', 'clean-duplicates', 'export-evidence-only']) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
   assert.match(html, /<script src="shared\/evidence-dedupe\.js"><\/script>/);
-  // 안내 메시지는 단계 컨테이너 밖에 있어 어느 단계에서나 보인다.
-  assert.ok(html.indexOf('id="editor-message"') < html.indexOf('<main'), '#editor-message should sit above the stage containers');
+  // 안내 메시지는 항상 보이는 아래 상태 줄에 있다.
+  assert.match(html, /<footer class="status-bar">\s*<p id="editor-message"/);
 
   assert.match(background, /import '\.\/shared\/evidence-dedupe\.js';/);
   assert.ok(
@@ -205,5 +205,5 @@ test('사용자 화면 문구에 내부 식별자가 남지 않는다', () => {
     assert.doesNotMatch(text, /RecordingSession|Draft_Report|RECORDING|\bN\/A\b/, text);
   }
   assert.doesNotMatch(html, />\s*(RECORDING|N\/A)\s*</);
-  assert.match(script, /null: '미판정'/);
+  assert.match(script, /\{ value: null, glyph: '○', label: '미판정'/);
 });

@@ -6,10 +6,6 @@
     captureModeHint: byId('capture-mode-hint'),
     captureFirstHeading: byId('capture-first-heading'),
     recordingSummary: byId('recording-summary'),
-    recordingSummaryScreens: byId('recording-summary-screens'),
-    recordingSummaryInputs: byId('recording-summary-inputs'),
-    recordingSummaryResults: byId('recording-summary-results'),
-    recordingSummaryAiReady: byId('recording-summary-ai-ready'),
     changePurpose: byId('change-purpose'),
     changeSummary: byId('change-summary'),
     completionSummaryFeatures: byId('completion-summary-features'),
@@ -17,7 +13,7 @@
     completionSummaryFail: byId('completion-summary-fail'),
     completionSummaryNa: byId('completion-summary-na'),
     completionSummaryEvidence: byId('completion-summary-evidence'),
-    completionSummaryAiImages: byId('completion-summary-ai-images'),
+    completionSummaryTotal: byId('completion-summary-total'),
     closeStorageDetail: byId('close-storage-detail'),
     closeLlmSettings: byId('close-llm-settings'),
     configurationOverview: byId('configuration-overview'),
@@ -94,14 +90,20 @@
     sessionStatus: byId('session-status'),
     showDownloadFolder: byId('show-download-folder'),
     showLastDownload: byId('show-last-download'),
-    stageCapture: byId('stage-capture'),
-    stageCompletion: byId('stage-completion'),
-    stageMappingResult: byId('stage-mapping-result'),
-    stageTabs: [
-      byId('stage-tab-capture'),
-      byId('stage-tab-mapping-result'),
-      byId('stage-tab-completion'),
-    ],
+    workspace: byId('workspace'),
+    showInbox: byId('show-inbox'),
+    showFeatures: byId('show-features'),
+    paneCountInbox: byId('pane-count-inbox'),
+    paneCountFeatures: byId('pane-count-features'),
+    featureCount: byId('feature-count'),
+    openExport: byId('open-export'),
+    exportDialog: byId('export-dialog'),
+    closeExport: byId('close-export'),
+    readinessSummary: byId('readiness-summary'),
+    reportName: byId('report-name'),
+    toggleView: byId('toggle-view'),
+    recordTarget: byId('record-target'),
+    captureTarget: byId('capture-target'),
     storageDetailDialog: byId('storage-detail-dialog'),
     storageEvidenceCount: byId('storage-evidence-count'),
     storageLastExportName: byId('storage-last-export-name'),
@@ -113,8 +115,6 @@
     testLlmRecommendation: byId('test-llm-recommendation'),
     toggleSession: byId('toggle-session'),
     validationWarnings: byId('validation-warnings'),
-    exportEvidenceQuick: byId('export-evidence-quick'),
-    exportEvidenceCompletion: byId('export-evidence-completion'),
     cleanDuplicates: byId('clean-duplicates'),
     pasteZone: byId('paste-zone'),
     pasteZoneTitle: byId('paste-zone-title'),
@@ -140,6 +140,7 @@
     // 대각선을 하나 더 그어(link-off) "연결이 끊긴" 상태를 나타낸다.
     'link-off': 'M10 13a5 5 0 0 1 0-7l1.5-1.5a5 5 0 0 1 7 7L17 13M14 11a5 5 0 0 1 0 7l-1.5 1.5a5 5 0 0 1-7-7L7 11M4 4l16 16',
     plus: 'M12 5v14M5 12h14',
+    target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z',
     trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15',
     // LLM 추천 세트 제목 버튼용 4각 스파클 아이콘. 다른 아이콘들과 동일하게 단일 path, 최소한의
     // 선/곡선 세그먼트로 구성해 link/trash/eye 등 기존 아이콘과 뚜렷이 구분되는 모양만 갖춘다.
@@ -194,8 +195,12 @@
   let evidenceDetailIds = [];
   let evidenceDetailIndex = 0;
   let mappingLinksFrame = null;
-  // Wizard_Stage 오케스트레이션: 현재 활성 단계 인덱스(0~3). 저장소에 저장하지 않는 순수 UI 상태.
-  let activeStageIndex = 0;
+  // 좁은 폭(사이드 패널)에서 작업대에 보여 줄 목록: 'inbox' | 'features'.
+  let narrowPane = 'inbox';
+  // 연결 버튼을 눌렀지만 테스트케이스를 고르지 않은 경우, 다음에 누르는 테스트케이스에 연결할 증적.
+  let pendingMapEvidenceIds = null;
+  // 이 페이지가 탭으로 열렸는지(넓게 보기) 사이드 패널로 열렸는지. 탭이면 탭 정보, 패널이면 null.
+  let hostTab = null;
   let sessionButtonState = 'INACTIVE';
   // Auto_AI_Pipeline: 매핑 직후 "증적 설명 생성" → "테스트케이스 설명 자동 생성"이 자동으로
   // 순차 실행되는 동안의 진행 상태. { featureId, steps: [{ key, label, status }] } 형태이며
@@ -206,6 +211,7 @@
   const aiPipelineClearTimers = new Map();
   // 펼쳐 둔 증적 세트(sessionId). 다시 그려도 펼친 상태를 유지한다.
   const expandedSessions = new Set();
+  const collapsedSessions = new Set();
   // 녹화 대상 탭에서 콘텐츠 스크립트가 응답했는지(IE 모드 탭 등은 응답하지 않는다).
   let autoCaptureAvailable = true;
   // AI 연결이 확인된 뒤에만(연결 테스트 성공 또는 실제 호출 성공) 자동 AI 기능을 돌린다.
@@ -222,43 +228,11 @@
   let preferredTemplate = null;
 
   const roleLabel = { before: '수행 전', action: '수행 시점', after: '수행 후' };
-  // 캡처 모드 선택 UI는 기본 화면에서 제거됐으나(iOS 원칙 1, 2), 내부적으로는 항상 'event' 모드로
-  // 동작한다. 이 텍스트는 IDLE/RECORDING 두 상태의 안내문으로 재사용된다.
-  const captureStageHintText = {
-    idle: '테스트를 평소처럼 진행하면 화면, DOM, API 맥락이 자동으로 저장됩니다.',
-    recording: '테스트 화면을 평소처럼 조작하세요. 주요 화면은 자동으로 수집됩니다.',
+  // 캡처 모드는 항상 'event'다. 녹화 전/중 안내문.
+  const captureHintText = {
+    idle: '테스트를 평소처럼 진행하면 화면과 맥락이 자동으로 저장됩니다.',
+    recording: '테스트 화면을 평소처럼 조작하세요. 끝나면 녹화 종료를 누르세요.',
   };
-
-  // 3개 Wizard_Stage 컨테이너. 증적 확인, 테스트케이스 매핑, 결과 입력은 같은 단계에서 처리한다.
-  const STAGE_CONTAINERS = [
-    elements.stageCapture,
-    elements.stageMappingResult,
-    elements.stageCompletion,
-  ];
-
-  // 액션 식별자(wizard-stage.js의 planActions가 반환하는 문자열)와 실제 버튼 엘리먼트를 잇는 고정 맵.
-  // 'import-images'는 hidden <input type="file">이 아니라 그것을 감싸는 <label class="file-button">이
-  // 실제 클릭 가능한 엘리먼트이므로 그 label을 사용한다.
-  const ACTION_ID_TO_BUTTON = {
-    'start-session': elements.toggleSession,
-    'end-session': elements.toggleSession,
-    'import-images': document.querySelector('.file-button'),
-    'add-feature': elements.addFeature,
-    'request-recommendations': elements.requestRecommendations,
-    'preview-report': elements.previewReport,
-    'export-report': elements.exportReport,
-    'open-save-project': elements.openSaveProject,
-  };
-
-  // 여러 액션 식별자가 같은 버튼을 공유할 수 있으므로(예: 'start-session'/'end-session'은 모두
-  // elements.toggleSession을 가리킴), 버튼 엘리먼트 기준으로 그룹화해 한 버튼에 대해 정확히 한 번만
-  // classList/hidden을 적용한다(같은 버튼을 두 번 순회하며 서로 다른 결과로 덮어쓰는 것을 방지).
-  const BUTTON_TO_ACTION_IDS = new Map();
-  for (const [actionId, button] of Object.entries(ACTION_ID_TO_BUTTON)) {
-    if (!button) continue;
-    if (!BUTTON_TO_ACTION_IDS.has(button)) BUTTON_TO_ACTION_IDS.set(button, []);
-    BUTTON_TO_ACTION_IDS.get(button).push(actionId);
-  }
 
   const PREVIEW_STORAGE_KEY = 'captureit-preview-storage';
 
@@ -316,6 +290,7 @@
       return option;
     });
     elements.reportSelect.replaceChildren(...options);
+    elements.reportName.textContent = report && report.title || '새 QA 보고서';
   }
 
   function renderReportFields() {
@@ -328,49 +303,61 @@
     elements.configurationOverview.value = report.configurationOverview || '';
   }
 
-  // 녹화 중 수집 현황 요약: RecordingSession이 활성화된 동안 editorState.evidence를
-  // triggerType 기준으로 집계해 "화면/입력 흐름/결과 메시지/AI 입력용 이미지" 4개 숫자로 보여준다
-  // (iOS 원칙 6, 7 - 사용자가 지금 무엇이 쌓이고 있는지 설명 없이 이해할 수 있어야 한다).
+  // 녹화 중 수집 현황: 이번 보고서에 쌓인 증적을 화면/입력/결과 메시지로 세어 한 줄로 보여준다.
   function computeRecordingSummary() {
     const evidenceList = editorState && Array.isArray(editorState.evidence) ? editorState.evidence : [];
-    const screens = evidenceList.filter((item) => ['baseline', 'click', 'route-change', 'manual-pin', 'navigation'].includes(item.triggerType)).length;
+    const screens = evidenceList.filter((item) => item.triggerType !== 'form-input').length;
     const inputs = evidenceList.filter((item) => item.triggerType === 'form-input').length;
     const results = evidenceList.filter((item) => (item.domAfter && (item.domAfter.resultMessages || []).length > 0)).length;
-    const aiReady = evidenceList.filter((item) => Boolean(item.llmImageDataUrl)).length;
-    return { screens, inputs, results, aiReady };
+    return { screens, inputs, results };
   }
 
   function renderRecordingSummary(active) {
     elements.recordingSummary.hidden = !active;
     if (!active) return;
     const summary = computeRecordingSummary();
-    elements.recordingSummaryScreens.textContent = String(summary.screens);
-    elements.recordingSummaryInputs.textContent = String(summary.inputs);
-    elements.recordingSummaryResults.textContent = String(summary.results);
-    elements.recordingSummaryAiReady.textContent = String(summary.aiReady);
+    const parts = [`화면 ${summary.screens}`];
+    if (summary.inputs) parts.push(`입력 ${summary.inputs}`);
+    if (summary.results) parts.push(`결과 메시지 ${summary.results}`);
+    elements.recordingSummary.textContent = `지금까지 ${parts.join(' · ')}`;
   }
 
-  // 첫 화면(IDLE)과 녹화 중 화면(RECORDING)을 하나의 섹션에서 텍스트/상태만 바꿔가며 표현한다
-  // (iOS 원칙 3 - 한 화면에는 하나의 주 행동만 둔다: IDLE에서는 "녹화 시작", RECORDING에서는
-  // "녹화 종료"만 강조된 primary CTA로 보인다).
+  // 녹화 전/녹화 시작 중/녹화 중을 수집 줄 하나에서 글자와 버튼만 바꿔 보여준다.
   function renderSession() {
     const active = Boolean(session && session.active);
     if (sessionButtonState !== 'STARTING') sessionButtonState = active ? 'ACTIVE' : 'INACTIVE';
     const starting = sessionButtonState === 'STARTING';
-    elements.sessionStatus.textContent = active ? '녹화 중' : starting ? '녹화 시작 중…' : '';
-    elements.sessionStatus.className = `status-pill ${active ? 'status-pill-recording' : 'status-pill-off'}`;
-    elements.captureFirstHeading.textContent = active ? '녹화 중' : '테스트 화면을 녹화하세요';
-    elements.captureModeHint.textContent = starting
-      ? '녹화를 시작하고 있습니다…'
-      : active ? captureStageHintText.recording : captureStageHintText.idle;
-    elements.toggleSession.textContent = starting ? '녹화 시작 중…' : active ? '녹화 종료' : '녹화 시작';
+    elements.sessionStatus.textContent = active ? '녹화 중' : starting ? '녹화 시작 중' : '녹화 안 함';
+    elements.sessionStatus.className = `rec-dot ${active ? 'is-on' : starting ? 'is-starting' : ''}`.trim();
+    elements.captureFirstHeading.textContent = active ? '녹화 중' : starting ? '녹화를 시작하고 있습니다…' : '테스트 화면을 녹화하세요';
+    elements.captureModeHint.textContent = active ? captureHintText.recording : captureHintText.idle;
+    elements.toggleSession.textContent = starting ? '시작 중…' : active ? '녹화 종료' : '녹화 시작';
     elements.toggleSession.disabled = starting;
-    elements.toggleSession.classList.toggle('button-danger', active);
+    elements.toggleSession.classList.toggle('is-recording', active);
+    elements.toggleSession.classList.toggle('button-quiet', active);
     elements.toggleSession.classList.toggle('button-primary', !active);
     elements.captureMode.disabled = starting || active;
     if (active) elements.captureMode.value = session.mode;
     renderRecordingSummary(active);
     renderPasteZone();
+    renderRecordTarget().catch(() => {});
+  }
+
+  // 사이드 패널에서는 지금 보이는 탭이 녹화 대상이다. 녹화 전에 어느 화면을 찍을지 미리 보여준다.
+  async function renderRecordTarget() {
+    const active = Boolean(session && session.active);
+    if (active || hostTab || typeof chrome === 'undefined' || !chrome.tabs) {
+      elements.recordTarget.hidden = true;
+      return;
+    }
+    const tab = await activeTabForRecording().catch(() => null);
+    const url = tab && tab.url || '';
+    if (!tab || !/^https?:/i.test(url)) {
+      elements.recordTarget.textContent = '녹화할 웹 화면 탭을 열어 두세요.';
+    } else {
+      elements.recordTarget.replaceChildren('녹화할 화면: ', Object.assign(document.createElement('strong'), { textContent: tab.title || url }));
+    }
+    elements.recordTarget.hidden = false;
   }
 
   function formatTimestamp(value) {
@@ -389,8 +376,6 @@
     elements.storageLastExportName.textContent = lastExport && lastExport.filename ? lastExport.filename : '-';
     elements.storageLastExportPath.textContent = lastExport && lastExport.fullPath ? lastExport.fullPath : 'ZIP 생성 전';
     elements.showLastDownload.disabled = !(lastExport && Number.isInteger(lastExport.downloadId));
-    // Header 단순화: "증적 n개"만 조용히 header에 표시한다(저장 위치 등 세부 정보는 더보기로 이동).
-    elements.headerEvidenceCount.textContent = `증적 ${evidenceCount}개`;
   }
 
   function setMoreMenuOpen(open) {
@@ -419,37 +404,54 @@
     queueSave();
   }
 
-  // 판정 순환 순서: PASS -> FAIL -> N/A(null) -> PASS ... Default_Verdict_Selection이었던
-  // 'PASS' 기본값 대신, 이제 판정 자체가 이 pill 클릭 즉시 feature.result.status에 반영된다
-  // (별도 확인 단계 없음 - 완료 탭으로 이동하는 것 자체가 사용자의 최종 승인으로 간주된다).
-  const VERDICT_CYCLE = ['PASS', 'FAIL', null];
-  const VERDICT_LABEL = { PASS: 'PASS', FAIL: 'FAIL', null: '미판정' };
+  // 판정은 버튼 세 개(✓ PASS / ✕ FAIL / ○ 미판정)로 바로 고른다. 한 번 누르면 바로 저장된다.
+  // AI는 판정을 기록하지 않는다. AI 의견이 있으면 버튼 제목에 참고로만 붙인다.
+  const VERDICTS = [
+    { value: 'PASS', glyph: '✓', label: 'PASS', className: 'verdict-pass' },
+    { value: 'FAIL', glyph: '✕', label: 'FAIL', className: 'verdict-fail' },
+    { value: null, glyph: '○', label: '미판정', className: 'verdict-na' },
+  ];
   const TEST_CASE_STATUS_TO_VERDICT = { PASS: 'PASS', FAIL: 'FAIL', INCOMPLETE: null, NOT_JUDGED: null };
 
-  async function cycleVerdict(feature) {
-    const currentIndex = VERDICT_CYCLE.indexOf(feature.result.status ?? null);
-    const nextValue = VERDICT_CYCLE[(currentIndex + 1) % VERDICT_CYCLE.length];
-    feature.result.status = nextValue;
+  async function setVerdict(feature, value) {
+    if ((feature.result.status ?? null) === value) return;
+    feature.result.status = value;
     await saveReport();
     renderFeatures();
     renderWarnings();
+    renderWorkspace();
   }
 
-  function verdictPill(feature) {
+  function statusMark(feature) {
     const status = feature.result.status ?? null;
-    const pill = document.createElement('button');
-    pill.type = 'button';
-    pill.className = `feature-status-pill verdict-${(status || 'na').toLowerCase()}`;
-    pill.textContent = VERDICT_LABEL[status];
+    const verdict = VERDICTS.find((item) => item.value === status) || VERDICTS[2];
+    const mark = document.createElement('span');
+    mark.className = `st ${status === 'PASS' ? 'st-pass' : status === 'FAIL' ? 'st-fail' : 'st-none'}`;
+    mark.textContent = `${verdict.glyph} ${verdict.label}`;
+    return mark;
+  }
+
+  function verdictControl(feature) {
+    const status = feature.result.status ?? null;
     const opinion = feature.aiOpinion && feature.aiOpinion.status;
-    const opinionText = opinion ? ` · AI 의견: ${opinion}${feature.aiOpinion.basis ? ` (${feature.aiOpinion.basis})` : ''}` : '';
-    pill.title = `클릭해서 판정 변경 (PASS → FAIL → 미판정)${opinionText}`;
-    pill.setAttribute('aria-label', `판정: ${VERDICT_LABEL[status]}. 클릭해서 변경${opinionText}`);
-    pill.addEventListener('click', (event) => {
-      event.stopPropagation();
-      cycleVerdict(feature).catch((error) => setMessage(`판정 변경 실패: ${error.message}`, true));
-    });
-    return pill;
+    const group = document.createElement('div');
+    group.className = 'verdict';
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', '판정');
+    for (const verdict of VERDICTS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `verdict-option ${verdict.className}`;
+      button.textContent = `${verdict.glyph} ${verdict.label}`;
+      button.setAttribute('aria-pressed', String(status === verdict.value));
+      if (opinion && opinion === verdict.value) button.title = `AI 의견: ${opinion}${feature.aiOpinion.basis ? ` (${feature.aiOpinion.basis})` : ''} · 참고용`;
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setVerdict(feature, verdict.value).catch((error) => setMessage(`판정 변경 실패: ${error.message}`, true));
+      });
+      group.append(button);
+    }
+    return group;
   }
 
   // 카드를 선택하면 결과 입력 필드(기대/실제 결과)가 확장되고 매핑 대상 테스트케이스로 지정된다.
@@ -457,6 +459,14 @@
   // 드로어는 featureDrawerToggleButton()의 명시적 클릭으로만 연다(요청: "오버레이로 바로 진입하지
   // 않고, 오버레이 진입 버튼을 단다"). 같은 카드를 다시 클릭하면 선택을 해제한다(토글).
   function selectFeature(featureId) {
+    if (pendingMapEvidenceIds) {
+      const feature = editorState.features.find((item) => item.id === featureId);
+      const evidenceIds = pendingMapEvidenceIds;
+      setPendingMapping(null);
+      currentFeatureId = featureId;
+      if (feature) mapEvidenceIdsWithConfirm(evidenceIds, feature).catch((error) => setMessage(error.message, true));
+      return;
+    }
     currentFeatureId = currentFeatureId === featureId ? null : featureId;
     renderFeatures();
     renderFeature();
@@ -523,10 +533,19 @@
     titleInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') titleInput.blur();
     });
-    const status = verdictPill(feature);
-    const drawerToggle = iconButton('선택된 증적 보기', 'eye', () => openFeatureDrawer(feature.id));
+    const evidenceCount = document.createElement('span');
+    evidenceCount.className = 'feature-evidence-count';
+    evidenceCount.textContent = feature.result.evidenceIds.length ? `증적 ${feature.result.evidenceIds.length}` : '증적 없음';
+    const drawerToggle = iconButton('연결된 증적 보기', 'eye', () => openFeatureDrawer(feature.id));
     drawerToggle.classList.add('feature-drawer-toggle');
-    header.append(indexLabel, titleInput, status, drawerToggle);
+    header.append(indexLabel, titleInput);
+    if (report && report.captureTargetFeatureId === feature.id) {
+      const targetMark = document.createElement('span');
+      targetMark.className = 'feature-target-mark';
+      targetMark.textContent = '● 수집 대상';
+      header.append(targetMark);
+    }
+    header.append(evidenceCount, statusMark(feature), drawerToggle);
 
     // Auto_AI_Pipeline 진행 체크리스트: 이 feature에 대해 파이프라인이 실행 중이거나 방금
     // 끝난 경우에만 렌더링한다(finishAiPipeline이 일정 시간 후 aiPipelineStatus를 지운다).
@@ -549,11 +568,18 @@
 
     const controls = document.createElement('div');
     controls.className = 'feature-controls';
+    const isTarget = Boolean(report && report.captureTargetFeatureId === feature.id);
     controls.append(
+      iconButton(isTarget ? '수집 대상 해제' : '수집 대상으로 지정: 새로 수집하거나 붙여넣은 증적을 여기에 바로 연결', 'target', () => {
+        setCaptureTarget(isTarget ? null : feature.id).catch((error) => setMessage(error.message, true));
+      }, false, isTarget ? 'is-active' : ''),
       iconButton('위로 이동', 'arrow-up', () => moveFeature(feature.id, -1), index === 0),
       iconButton('아래로 이동', 'arrow-down', () => moveFeature(feature.id, 1), index === editorState.features.length - 1),
       iconButton('테스트케이스 삭제', 'trash', () => removeFeature(feature.id), false, 'danger'),
     );
+    const footer = document.createElement('div');
+    footer.className = 'feature-footer';
+    footer.append(verdictControl(feature), controls);
     // 설명 영역은 클릭하면(텍스트 입력 전이라도) 카드를 선택시켜 결과 입력 영역을 확장한다 -
     // 다만 이미 선택된 카드라면 선택을 건드리지 않아 텍스트 입력/커서 이동이 방해받지 않는다
     // (selectFeature()는 토글이라 이미 선택된 상태에서 호출하면 선택이 풀려버리므로 그 경우엔 호출하지 않는다).
@@ -583,6 +609,21 @@
     // 트랜지션은 브라우저 지원이 일정치 않아 애니메이션이 재생되지 않는 경우가 있어 사용하지 않는다).
     const resultFields = document.createElement('div');
     resultFields.className = 'feature-result-fields';
+    // 검증 내용은 보고서 표에 들어가는데 카드에 입력란이 없어 내보내기 때마다 "비어 있음" 경고만 떴다.
+    const verificationField = document.createElement('label');
+    verificationField.className = 'wide';
+    verificationField.append('검증 내용');
+    const verificationInput = document.createElement('textarea');
+    verificationInput.dataset.featureField = 'verification';
+    verificationInput.rows = 2;
+    verificationInput.placeholder = '무엇을 확인했는지';
+    verificationInput.value = feature.result.verification || '';
+    verificationInput.addEventListener('click', (event) => event.stopPropagation());
+    verificationInput.addEventListener('change', () => {
+      feature.result.verification = verificationInput.value;
+      queueSave();
+    });
+    verificationField.append(verificationInput);
     const expectedField = document.createElement('label');
     expectedField.className = 'wide';
     expectedField.append('기대 결과');
@@ -603,17 +644,17 @@
     actualInput.addEventListener('click', (event) => event.stopPropagation());
     actualInput.addEventListener('change', () => saveFeatureActualResult(feature, actualInput.value));
     actualField.append(actualInput);
-    resultFields.append(expectedField, actualField);
+    resultFields.append(verificationField, expectedField, actualField);
 
     card.append(header);
     if (feature.aiOpinion && feature.aiOpinion.status) {
       const opinionHint = document.createElement('p');
       opinionHint.className = 'ai-opinion-hint';
-      opinionHint.textContent = `AI 의견: ${feature.aiOpinion.status} · 참고용이며 판정은 직접 선택합니다`;
+      opinionHint.textContent = `AI 의견: ${feature.aiOpinion.status}${feature.aiOpinion.basis ? ` — ${feature.aiOpinion.basis}` : ''} (참고용, 판정은 직접 고릅니다)`;
       card.append(opinionHint);
     }
     if (pipelineChecklist) card.append(pipelineChecklist);
-    card.append(descriptionField, resultFields, controls);
+    card.append(descriptionField, resultFields, footer);
     return card;
   }
 
@@ -621,6 +662,7 @@
   function commitFeatureField(feature, field, value) {
     if (field === 'title') feature.title = value;
     else if (field === 'description') feature.description = value;
+    else if (field === 'verification') feature.result.verification = value;
     else if (field === 'expectedResult') feature.result.expectedResult = value;
     else if (field === 'actualResult') feature.result.actualResult = value;
     else return;
@@ -718,7 +760,7 @@
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = '증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요.';
+      elements.featureMappingGuidance.textContent = '증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요.';
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -872,10 +914,15 @@
     button.title = '테스트케이스에 매핑';
     button.setAttribute('aria-label', '테스트케이스에 매핑');
     button.replaceChildren(iconSvg('link'));
-    if (!currentFeature()) button.title = '오른쪽에서 테스트케이스를 먼저 고르세요(없으면 새로 만들어 연결합니다)';
+    if (currentFeature()) button.title = `'${currentFeature().title}'에 연결`;
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
       try {
+        // 고른 테스트케이스가 없고 여러 개 있으면, 다음에 누르는 테스트케이스에 연결한다.
+        if (!currentFeature() && editorState.features.length > 1) {
+          setPendingMapping(evidenceIds);
+          return;
+        }
         const feature = await featureForMapping();
         if (!feature) return;
         await mapEvidenceIdsWithConfirm(evidenceIds, feature);
@@ -1108,7 +1155,9 @@
     body.append(...items.map((item) => captureNode(item, group.evidenceIds)));
 
     if (group.count > 1) {
-      let expanded = forceExpand || expandedSessions.has(group.sessionId);
+      // 작은 세트는 처음부터 펼쳐 화면을 바로 보여 주고, 큰 세트(9장 이상)는 접어 둔다. 사용자가 바꾼 상태는 기억한다.
+      const remembered = expandedSessions.has(group.sessionId) ? true : collapsedSessions.has(group.sessionId) ? false : group.count <= 8;
+      let expanded = forceExpand || remembered;
       body.hidden = !expanded;
       const toggle = document.createElement('button');
       toggle.type = 'button';
@@ -1118,8 +1167,13 @@
       toggle.replaceChildren(iconSvg(expanded ? 'chevronUp' : 'chevronDown'));
       toggle.addEventListener('click', () => {
         expanded = !expanded;
-        if (expanded) expandedSessions.add(group.sessionId);
-        else expandedSessions.delete(group.sessionId);
+        if (expanded) {
+          expandedSessions.add(group.sessionId);
+          collapsedSessions.delete(group.sessionId);
+        } else {
+          expandedSessions.delete(group.sessionId);
+          collapsedSessions.add(group.sessionId);
+        }
         body.hidden = !expanded;
         toggle.title = expanded ? '접기' : '펼치기';
         toggle.setAttribute('aria-label', expanded ? '접기' : '펼치기');
@@ -1236,8 +1290,9 @@
     window.open('viewer.html', '_blank', 'noopener');
   }
 
+  // 녹화 중에만 수집 줄에 방금 찍힌 화면 하나를 보여준다(제대로 찍혔는지 바로 확인).
   function renderRecentEvidence() {
-    const evidence = latestEvidence();
+    const evidence = session && session.active ? latestEvidence() : null;
     if (!evidence) {
       elements.recentEvidence.replaceChildren();
       return;
@@ -1297,9 +1352,10 @@
     const layer = elements.mappingLinkLayer;
     if (!layer) return;
     layer.replaceChildren();
-    if (activeStageIndex !== 1 || elements.stageMappingResult.hidden) return;
+    // 좁은 폭(사이드 패널)에서는 두 목록이 한 칸에 번갈아 보이므로 연결선을 그리지 않는다.
+    if (isNarrow()) return;
 
-    const stageRect = elements.stageMappingResult.getBoundingClientRect();
+    const stageRect = elements.workspace.getBoundingClientRect();
     if (stageRect.width <= 0) return;
     const contentHeight = [
       elements.evidenceDropZone,
@@ -1367,20 +1423,64 @@
     });
   }
 
+  // 내보내기 창의 "남은 것" 목록. 테스트케이스마다 한 줄로 묶고, 누르면 창을 닫고 그 테스트케이스를 고른다.
+  const WARNING_SHORT = {
+    UNSET_VERDICT: '판정',
+    NO_EVIDENCE: '증적',
+    MISSING_VERIFICATION: '검증 내용',
+    MISSING_EXPECTED_RESULT: '기대 결과',
+    MISSING_ACTUAL_RESULT: '실제 결과',
+  };
+
   function renderWarnings() {
-    if (!report) return;
-    const warnings = CaptureITDomain.validationWarnings(report);
-    elements.validationWarnings.replaceChildren(...warnings.map((warning) => {
+    if (!report) {
+      elements.validationWarnings.replaceChildren();
+      return;
+    }
+    const warnings = CaptureITDomain.validationWarnings({ ...report, features: editorState.features });
+    const items = [];
+    const byFeature = new Map();
+    for (const warning of warnings) {
+      if (!warning.featureId) {
+        items.push({ featureId: null, text: warning.message });
+        continue;
+      }
+      if (!byFeature.has(warning.featureId)) byFeature.set(warning.featureId, []);
+      byFeature.get(warning.featureId).push(warning.code);
+    }
+    editorState.features.forEach((feature, index) => {
+      const codes = byFeature.get(feature.id);
+      if (!codes) return;
+      const missing = codes.map((code) => WARNING_SHORT[code]).filter(Boolean);
+      const failNote = codes.includes('FAIL_WITHOUT_ACTUAL_RESULT') ? ' (FAIL이면 실제 결과가 필요합니다)' : '';
+      items.push({ featureId: feature.id, text: `${index + 1}. ${feature.title || '제목 없는 테스트케이스'} — 빠짐: ${missing.join(', ')}${failNote}` });
+    });
+    elements.validationWarnings.replaceChildren(...items.map((entry) => {
       const item = document.createElement('li');
-      const feature = warning.featureId && editorState.features.find((entry) => entry.id === warning.featureId);
-      item.textContent = `${feature ? `${feature.title}: ` : ''}${warning.message}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = entry.text;
+      button.addEventListener('click', () => {
+        elements.exportDialog.close();
+        if (entry.featureId) focusFeature(entry.featureId);
+      });
+      item.append(button);
       return item;
     }));
   }
 
-  // 완료 단계 요약: 검증 항목 수/PASS/FAIL/N/A 판정 분포, 문서에 포함되는(매핑된) 증적 수(중복 제거),
-  // AI 입력용 이미지(llmImageDataUrl 보유) 수를 계산한다. renderStage()가 호출될 때마다 함께
-  // 갱신되므로 완료 단계가 보이지 않는 동안에도 데이터가 항상 최신 상태로 유지된다.
+  // 테스트케이스 하나를 골라 화면에 보이게 한다(좁은 폭이면 테스트케이스 목록으로 바꾼다).
+  function focusFeature(featureId) {
+    currentFeatureId = featureId;
+    setNarrowPane('features');
+    renderFeatures();
+    renderFeature();
+    renderEvidence();
+    const card = elements.featureList.querySelector(`[data-feature-id="${featureId}"]`);
+    if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  // 내보내기 요약: 테스트케이스 수, 판정 분포, 문서에 들어가는(연결된) 증적 수(중복 제거), 전체 증적 수.
   function computeCompletionSummary() {
     const features = editorState && Array.isArray(editorState.features) ? editorState.features : [];
     const pass = features.filter((feature) => feature.result.status === 'PASS').length;
@@ -1395,9 +1495,8 @@
     }
 
     const evidenceList = editorState && Array.isArray(editorState.evidence) ? editorState.evidence : [];
-    const aiImages = evidenceList.filter((item) => Boolean(item.llmImageDataUrl)).length;
 
-    return { features: features.length, pass, fail, na, evidence: mappedEvidenceIds.size, aiImages };
+    return { features: features.length, pass, fail, na, evidence: mappedEvidenceIds.size, total: evidenceList.length };
   }
 
   function currentTemplateId() {
@@ -1458,7 +1557,7 @@
     elements.completionSummaryFail.textContent = String(summary.fail);
     elements.completionSummaryNa.textContent = String(summary.na);
     elements.completionSummaryEvidence.textContent = String(summary.evidence);
-    elements.completionSummaryAiImages.textContent = String(summary.aiImages);
+    elements.completionSummaryTotal.textContent = String(summary.total);
   }
 
   function renderRecommendations() {
@@ -1504,30 +1603,22 @@
     elements.recommendationList.replaceChildren(...cards);
   }
 
-  // 단계별 다음 행동 안내(요구사항 8.1~8.7). 조건들을 우선순위대로 확인해 해당하는 문구들을 모아
-  // #guidance-banner에 표시한다. 표시할 문구가 없으면 배너를 숨긴다.
+  // 지금 할 다음 행동 한 줄. 단계가 없으므로 녹화 상태와 작업 상태만 보고 고른다.
   function renderGuidance() {
     const messages = [];
     const evidenceCount = editorState.evidence.length;
     const featureCount = editorState.features.length;
     const unmappedFeatures = editorState.features.filter((feature) => feature.result.evidenceIds.length === 0).length;
+    const unjudged = editorState.features.filter((feature) => !feature.result.status).length;
     const recording = Boolean(session && session.active);
-    if (activeStageIndex === 0) {
-      if (recording) messages.push('녹화 중입니다. 테스트 화면을 평소처럼 조작하고, 끝나면 녹화 종료를 누르세요.');
-      else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
-      else messages.push(`증적 ${evidenceCount}개가 모였습니다. 2단계에서 테스트케이스에 연결하세요.`);
-    } else if (activeStageIndex === 1) {
-      if (evidenceCount === 0) messages.push('아직 증적이 없습니다. 1단계에서 녹화하거나 스크린샷을 붙여넣으세요.');
-      else if (featureCount === 0) messages.push('증적 세트의 🔗 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다. 오른쪽 + 로 먼저 만들어도 됩니다.');
-      else if (unmappedFeatures > 0) messages.push(`증적이 연결되지 않은 테스트케이스가 ${unmappedFeatures}개 있습니다. 카드를 고른 뒤 🔗 버튼을 누르거나, 증적 세트를 카드로 끌어다 놓으세요.`);
-      else messages.push('판정(PASS/FAIL)을 정한 뒤 3단계에서 문서를 만드세요.');
-    } else if (featureCount === 0) {
-      messages.push('아직 테스트케이스가 없습니다. 사진만 전달하려면 "증적만 ZIP"을 누르세요.');
-    } else if (report && report.isDraft) {
-      messages.push('저장은 선택사항입니다. 미리보기나 ZIP 생성 후에 해도 됩니다.');
-    }
+    if (recording) messages.push('테스트 화면을 평소처럼 조작하세요. 주요 화면이 자동으로 수집됩니다.');
+    else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
+    else if (featureCount === 0) messages.push('증적 세트의 연결 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다.');
+    else if (unmappedFeatures > 0) messages.push(`증적이 없는 테스트케이스가 ${unmappedFeatures}개 있습니다. 테스트케이스를 고른 뒤 증적의 연결 버튼을 누르거나, 증적 세트를 카드로 끌어다 놓으세요.`);
+    else if (unjudged > 0) messages.push(`판정하지 않은 테스트케이스가 ${unjudged}개 있습니다.`);
+    else messages.push('모두 판정했습니다. 내보내기를 누르세요.');
     if (elements.reportDraftSuggestionDialog.open) {
-      messages.push('제안된 보고서명과 형상·체크아웃 개요는 승인 또는 수정 후 저장됩니다.');
+      messages.push('제안된 보고서명과 형상·체크아웃 개요는 반영을 눌러야 저장됩니다.');
     }
     elements.guidanceBanner.replaceChildren();
     if (messages.length === 0) {
@@ -1544,60 +1635,134 @@
     elements.guidanceBanner.hidden = false;
   }
 
-  // editorState/report/session으로부터 wizard-stage.js가 요구하는 snapshot을 만든다.
-  function currentStageSnapshot() {
-    return {
-      evidenceCount: editorState.evidence.length,
-      featureCount: editorState.features.length,
-      mappedFeatureCount: editorState.features.filter((feature) => feature.result.evidenceIds.length > 0).length,
-      sessionActive: Boolean(session && session.active),
-    };
-  }
-
-  // planActions의 결과를 실제 button 엘리먼트의 CSS 클래스/hidden 속성에 반영한다.
-  // 버튼 자체(핸들러, disabled 로직)는 기존 코드를 그대로 사용하고, 여기서는 오직
-  // 'button-primary'/'button-secondary' 클래스와 hidden만 토글한다.
-  function applyActionPlan(snapshot) {
-    const context = {
-      sessionActive: snapshot.sessionActive,
-      currentFeatureHasMappedEvidence: Boolean(currentFeature() && currentFeature().result.evidenceIds.length > 0),
-    };
-    const plan = CaptureITWizardStage.planActions(activeStageIndex, context);
-    for (const [button, actionIds] of BUTTON_TO_ACTION_IDS) {
-      const isPrimary = actionIds.some((actionId) => plan.primary === actionId);
-      const isSecondary = !isPrimary && actionIds.some((actionId) => plan.secondary.includes(actionId));
-      button.classList.toggle('button-primary', isPrimary);
-      button.classList.toggle('button-secondary', isSecondary);
-      button.hidden = !isPrimary && !isSecondary;
+  // 상태 줄의 준비 상태: "테스트케이스 3 · ✓2 ✕0 ○1". 단계 대신 내가 만들려는 것에 무엇이 남았는지 보여준다.
+  function renderReadiness() {
+    const summary = computeCompletionSummary();
+    elements.readinessSummary.replaceChildren();
+    if (summary.features === 0) {
+      elements.readinessSummary.textContent = summary.total ? `증적 ${summary.total}` : '';
+    } else {
+      const pass = Object.assign(document.createElement('span'), { className: 'st-pass', textContent: `✓${summary.pass}` });
+      const fail = Object.assign(document.createElement('span'), { className: 'st-fail', textContent: `✕${summary.fail}` });
+      elements.readinessSummary.append(`테스트케이스 ${summary.features} · `, pass, ' ', fail, ` ○${summary.na}`);
     }
+    elements.openExport.disabled = summary.total === 0 && summary.features === 0;
+    elements.paneCountInbox.textContent = String(summary.total);
+    elements.paneCountFeatures.textContent = String(summary.features);
+    elements.headerEvidenceCount.textContent = summary.total ? String(summary.total) : '';
+    elements.featureCount.textContent = summary.features ? String(summary.features) : '';
   }
 
-  // 이 함수가 4개의 공유 영역을 현재 activeStageIndex에 맞는 컨테이너로 재배치하고,
-  // 각 stage 컨테이너의 hidden 속성을 갱신하고, 탭의 disabled/active 상태와 planActions 결과에
-  // 따른 button-primary/button-secondary 클래스를 다시 적용한다.
-  // evidence-drop-zone/feature-panel/feature-mapping-target/.actions는 모두 stage-mapping-result
-  // 안에 정적으로 배치되어 있어(더 이상 여러 단계에 걸쳐 재배치되지 않음) mountRegion 호출이 필요 없다.
-  function renderStage() {
-    const snapshot = currentStageSnapshot();
-    if (activeStageIndex < 0 || activeStageIndex >= STAGE_CONTAINERS.length) activeStageIndex = 0;
+  function isNarrow() {
+    return window.matchMedia('(max-width: 759px)').matches;
+  }
 
-    STAGE_CONTAINERS.forEach((container, index) => {
-      container.hidden = index !== activeStageIndex;
-      elements.stageTabs[index].disabled = false;
-      elements.stageTabs[index].classList.toggle('active', index === activeStageIndex);
-    });
+  function setNarrowPane(pane) {
+    narrowPane = pane === 'features' ? 'features' : 'inbox';
+    elements.workspace.dataset.pane = narrowPane;
+    elements.showInbox.setAttribute('aria-pressed', String(narrowPane === 'inbox'));
+    elements.showFeatures.setAttribute('aria-pressed', String(narrowPane === 'features'));
+  }
 
-    applyActionPlan(snapshot);
+  // 작업대 공통 상태(안내, 준비 상태, 내보내기 요약, 연결선)를 다시 그린다.
+  // 증적·테스트케이스·녹화 상태를 바꾸는 동작은 끝에 이 함수를 부른다.
+  function renderWorkspace() {
     renderGuidance();
+    renderReadiness();
     renderCompletionSummary();
-    renderTemplatePicker();
+    renderCaptureTarget();
     scheduleMappingLinks();
   }
 
-  // 탭 클릭/다음 단계 버튼 클릭 시 호출: 단계 탭은 데이터 충족 여부와 무관하게 직접 렌더링한다.
-  function goToStage(targetIndex) {
-    if (targetIndex >= 0 && targetIndex < STAGE_CONTAINERS.length) activeStageIndex = targetIndex;
-    renderStage();
+  function setPendingMapping(evidenceIds) {
+    pendingMapEvidenceIds = evidenceIds && evidenceIds.length ? evidenceIds : null;
+    elements.featureList.classList.toggle('picking', Boolean(pendingMapEvidenceIds));
+    if (pendingMapEvidenceIds) {
+      setNarrowPane('features');
+      setMessage(`증적 ${pendingMapEvidenceIds.length}장을 연결할 테스트케이스를 누르세요. 취소하려면 Esc.`);
+    }
+  }
+
+  function openExportDialog() {
+    renderWarnings();
+    renderCompletionSummary();
+    renderTemplatePicker();
+    renderExportEvidenceButtons();
+    elements.exportReport.disabled = editorState.features.length === 0;
+    elements.exportReport.title = editorState.features.length === 0 ? '테스트케이스가 없으면 증적만 ZIP으로 받으세요' : '';
+    if (!elements.exportDialog.open) elements.exportDialog.showModal();
+  }
+
+  // 수집 대상: 정해 두면 새로 수집하거나 붙여넣은 증적이 그 테스트케이스에 바로 연결된다.
+  async function setCaptureTarget(featureId) {
+    await ensureDraftReportForCapture();
+    report.captureTargetFeatureId = featureId || null;
+    await saveReport();
+    renderFeatures();
+    renderWorkspace();
+    const feature = featureId && editorState.features.find((item) => item.id === featureId);
+    setMessage(feature ? `이제 새 증적은 '${feature.title}'에 바로 연결됩니다.` : '수집 대상을 해제했습니다. 새 증적은 수집함에만 쌓입니다.');
+  }
+
+  function captureTargetFeature() {
+    const targetId = report && report.captureTargetFeatureId;
+    return targetId ? editorState.features.find((item) => item.id === targetId) || null : null;
+  }
+
+  function renderCaptureTarget() {
+    const feature = captureTargetFeature();
+    elements.captureTarget.hidden = !feature;
+    if (!feature) return;
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'text-button';
+    clear.textContent = '해제';
+    clear.addEventListener('click', () => setCaptureTarget(null).catch((error) => setMessage(error.message, true)));
+    elements.captureTarget.replaceChildren('새 증적 연결 대상: ', Object.assign(document.createElement('strong'), { textContent: feature.title || '제목 없는 테스트케이스' }), clear);
+  }
+
+  // 새로 들어온(연결 안 된) 증적을 수집 대상 테스트케이스에 붙인다. AI 자동 작성은 돌리지 않는다.
+  async function attachToCaptureTarget(evidenceIds) {
+    const feature = captureTargetFeature();
+    if (!feature || evidenceIds.length === 0) return 0;
+    const fresh = evidenceIds.filter((id) => {
+      const item = editorState.evidence.find((entry) => entry.id === id);
+      return item && !item.featureSpecId;
+    });
+    if (fresh.length === 0) return 0;
+    CaptureITDomain.mapEvidenceBatch(editorState, fresh, feature.id);
+    await persistMappedEvidence(fresh);
+    await saveReport();
+    return fresh.length;
+  }
+
+  // 사이드 패널 ↔ 탭 전환. 둘이 동시에 열려 같은 보고서를 고치지 않도록 전환한 뒤 지금 창은 닫는다.
+  async function switchView() {
+    if (hostTab) {
+      if (!chrome.sidePanel || typeof chrome.sidePanel.open !== 'function') throw new Error('이 브라우저는 사이드 패널을 지원하지 않습니다.');
+      await chrome.sidePanel.open({ windowId: hostTab.windowId });
+      await chrome.tabs.remove(hostTab.id);
+      return;
+    }
+    await chrome.tabs.create({ url: chrome.runtime.getURL('editor.html') });
+    window.close();
+  }
+
+  async function detectHost() {
+    if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.getCurrent !== 'function') return;
+    hostTab = await chrome.tabs.getCurrent().catch(() => null) || null;
+    document.body.dataset.host = hostTab ? 'tab' : 'panel';
+    const canUsePanel = Boolean(chrome.sidePanel && typeof chrome.sidePanel.open === 'function');
+    elements.toggleView.hidden = hostTab ? !canUsePanel : false;
+    elements.toggleView.textContent = hostTab ? '옆에 두기' : '넓게 보기';
+    elements.toggleView.title = hostTab ? '테스트 화면 옆 사이드 패널로 옮깁니다' : '같은 작업을 탭으로 크게 엽니다';
+    if (!hostTab && chrome.tabs.onActivated) {
+      // 패널에서는 지금 보이는 탭이 녹화 대상이므로 탭을 바꾸면 안내를 갱신한다.
+      chrome.tabs.onActivated.addListener(() => renderRecordTarget().catch(() => {}));
+      chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        if (tab && tab.active && (changeInfo.title || changeInfo.url)) renderRecordTarget().catch(() => {});
+      });
+    }
   }
 
   function renderAll() {
@@ -1610,7 +1775,7 @@
     renderWarnings();
     renderStorageStatus();
     renderGuidance();
-    renderStage();
+    renderWorkspace();
   }
 
   async function refreshReportSummaries() {
@@ -1733,7 +1898,7 @@
     renderFeatures();
     renderFeature();
     renderEvidence();
-    renderStage();
+    renderWorkspace();
   }
 
   async function moveFeature(featureId, offset) {
@@ -1756,7 +1921,7 @@
     renderFeatures();
     renderFeature();
     renderEvidence();
-    renderStage();
+    renderWorkspace();
   }
 
   // 연결할 테스트케이스: 고른 것이 있으면 그것, 하나도 없으면 새로 만든다. 여러 개인데 고르지 않았으면 안내한다.
@@ -1768,7 +1933,9 @@
       setMessage('테스트케이스가 없어서 새로 만들어 연결했습니다. 이름을 바꿔 주세요.');
       return currentFeature();
     }
-    setMessage('오른쪽에서 연결할 테스트케이스를 먼저 고르세요.', true);
+    setPendingMapping(null);
+    setMessage('연결할 테스트케이스를 먼저 고르세요.', true);
+    setNarrowPane('features');
     return null;
   }
 
@@ -1809,7 +1976,7 @@
     renderEvidence();
     renderFeatures();
     renderFeature();
-    renderStage();
+    renderWorkspace();
     setMessage('연결을 해제했습니다. 사진은 증적 수집함에 남아 있습니다.');
   }
 
@@ -1831,7 +1998,7 @@
     await saveReport();
     renderEvidence();
     renderRecommendations();
-    renderStage();
+    renderWorkspace();
   }
 
   // evidenceIds에 해당하는 editorState.evidence 항목들을 저장소에 반영한다.
@@ -1855,7 +2022,7 @@
     renderEvidence();
     renderFeatures();
     renderFeature();
-    renderStage();
+    renderWorkspace();
     // Auto_AI_Pipeline: 매핑(🔗 매핑 버튼/드래그앤드롭 공용 경로)이 끝난 직후 자동으로
     // "증적 설명 생성" → "테스트케이스 설명 자동 생성"을 순서대로 호출한다. 매핑 자체는 이미
     // 저장/렌더링이 끝났으므로 이 호출의 실패가 매핑 결과에 영향을 주지 않는다.
@@ -1884,7 +2051,7 @@
     renderFeatures();
     renderWarnings();
     renderRecommendations();
-    renderStage();
+    renderWorkspace();
     elements.quickMappingDialog.close();
     setMessage('빠른 매핑을 완료했습니다.');
     // Auto_AI_Pipeline: Quick_Mapping_Dialog로 매핑을 마친 경우도 mapEvidenceIds 경로와
@@ -1933,7 +2100,7 @@
     renderEvidence();
     renderFeatures();
     renderFeature();
-    renderStage();
+    renderWorkspace();
     return true;
   }
 
@@ -1952,7 +2119,7 @@
     renderEvidence();
     renderFeatures();
     renderRecommendations();
-    renderStage();
+    renderWorkspace();
   }
 
   // Feature_Group_Title: capture-graph 헤더의 제목 입력란은 evidence.description 편집(evidenceCard)과
@@ -2116,7 +2283,7 @@
       throw error;
     }
     renderSession();
-    renderStage();
+    renderWorkspace();
   }
 
   async function stopRecordingSession() {
@@ -2125,9 +2292,7 @@
     sessionButtonState = 'INACTIVE';
     await refreshEvidence();
     renderSession();
-    // 녹화를 끝내면 다음 할 일(증적 연결·결과 입력)로 넘어간다.
-    if (editorState.evidence.length > 0) activeStageIndex = 1;
-    renderStage();
+    renderWorkspace();
     setMessage(editorState.evidence.length > 0
       ? `녹화를 종료했습니다. 증적 ${editorState.evidence.length}개를 테스트케이스에 연결하세요.`
       : '녹화를 종료했습니다.');
@@ -2140,11 +2305,11 @@
     if (sessionButtonState === 'STARTING') return;
     if (session && session.active) {
       await stopRecordingSession();
-      renderStage();
+      renderWorkspace();
       return;
     }
     await toggleRecordingSession();
-    renderStage();
+    renderWorkspace();
   }
 
   // Draft_Report를 보장한다. 이미 report가 있으면 아무 부작용 없이 그대로 둔다(idempotent).
@@ -2209,12 +2374,13 @@
     const target = importSessionFor(Date.now());
     const rejected = [];
     let added = 0;
+    const addedIds = [];
     let skippedDuplicates = 0;
     for (const file of files) {
       const label = fromPaste ? '붙여넣은 이미지' : file.name;
       try {
         if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-          throw new Error(/\.zip$/i.test(file.name || '') ? 'ZIP은 더보기 → QA 뷰어 열기에서 엽니다' : '지원하지 않는 형식');
+          throw new Error(/\.zip$/i.test(file.name || '') ? 'ZIP은 ⋮ → 받은 ZIP 열어 보기에서 엽니다' : '지원하지 않는 형식');
         }
         const imageDataUrl = await readFileAsDataUrl(file);
         const loaded = await loadImage(imageDataUrl);
@@ -2258,6 +2424,7 @@
         target.lastEvidenceId = evidence.id;
         await CaptureITStorage.putEvidence(evidence);
         editorState.evidence.push(evidence);
+        addedIds.push(evidence.id);
         added += 1;
       } catch (error) {
         rejected.push(`${label} (${error.message})`);
@@ -2265,12 +2432,17 @@
     }
     await CaptureITStorage.putSession(target);
     editorState = CaptureITDomain.createEditorState(editorState.evidence, editorState.features);
+    const attached = await attachToCaptureTarget(addedIds);
+    if (attached) {
+      renderFeatures();
+      renderFeature();
+    }
     renderEvidence();
     renderStorageStatus();
     renderGuidance();
-    renderStage();
+    renderWorkspace();
     const parts = [];
-    if (added) parts.push(`${added}개 이미지를 수집된 증적에 추가했습니다.`);
+    if (added) parts.push(attached ? `${added}개 이미지를 '${captureTargetFeature().title}'에 연결했습니다.` : `${added}개 이미지를 증적 수집함에 넣었습니다.`);
     if (skippedDuplicates) parts.push(`같은 이미지 ${skippedDuplicates}개는 건너뛰었습니다.`);
     if (rejected.length) parts.push(`제외: ${rejected.join(', ')}`);
     setMessage(parts.join(' ') || '추가된 이미지가 없습니다.', rejected.length > 0);
@@ -2304,18 +2476,15 @@
     elements.pasteZone.classList.toggle('paste-zone-warning', unavailable);
     elements.pasteZoneTitle.textContent = unavailable
       ? '이 탭은 자동 수집이 되지 않습니다'
-      : '자동 수집이 안 되는 화면은 붙여넣으세요';
+      : '자동 수집이 안 되는 화면은 캡처해서 여기에 Ctrl+V';
     elements.pasteZoneHint.textContent = unavailable
       ? 'IE 모드 화면 등은 클릭이 기록되지 않습니다. 화면을 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요.'
-      : '다른 브라우저나 IE 모드 화면은 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요. 이미지 파일은 창 어디에나 끌어다 놓으면 됩니다.';
+      : '다른 브라우저나 IE 모드 화면은 Win+Shift+S로 캡처한 뒤 이 창을 누르고 Ctrl+V 하세요. 이미지 파일은 어디에나 끌어다 놓으면 됩니다.';
   }
 
   function renderExportEvidenceButtons() {
-    const empty = editorState.evidence.length === 0;
-    for (const button of [elements.exportEvidenceQuick, elements.exportEvidenceCompletion]) {
-      if (button) button.disabled = empty;
-    }
-    if (elements.cleanDuplicates) elements.cleanDuplicates.disabled = editorState.evidence.length < 2;
+    elements.exportEvidenceOnly.disabled = editorState.evidence.length === 0;
+    elements.cleanDuplicates.disabled = editorState.evidence.length < 2;
   }
 
   // 중복 화면 정리: 같은 세션에서 연달아 찍힌 거의 같은 화면을 첫 화면 하나로 합친다.
@@ -2375,7 +2544,7 @@
       await saveReport();
       renderEvidence();
       renderStorageStatus();
-      renderStage();
+      renderWorkspace();
       setMessage(`중복 화면 ${removed.size}장을 정리했습니다.`);
     } finally {
       renderExportEvidenceButtons();
@@ -3152,17 +3321,25 @@
   function bindInputs() {}
 
   async function refreshEvidence() {
+    const knownIds = new Set(editorState.evidence.map((item) => item.id));
     const evidence = await loadReportEvidence();
     editorState = CaptureITDomain.createEditorState(evidence, editorState.features);
+    const attached = await attachToCaptureTarget(evidence.filter((item) => !knownIds.has(item.id)).map((item) => item.id));
+    if (attached) {
+      renderFeatures();
+      renderFeature();
+    }
     renderEvidence();
     renderWarnings();
     renderStorageStatus();
     // 녹화 중 화면의 수집 현황 숫자(화면/입력 흐름/결과 메시지/AI 입력용 이미지)를 새 증적이
     // 생성될 때마다 최신 상태로 갱신한다.
     renderRecordingSummary(Boolean(session && session.active));
+    renderWorkspace();
   }
 
   async function load() {
+    await detectHost();
     const stored = await extensionStorage.get([
       'activeReportId',
       'captureSession',
@@ -3249,11 +3426,14 @@
     importImages([...event.dataTransfer.files], 'file').catch((error) => setMessage(error.message, true));
   });
   elements.cleanDuplicates.addEventListener('click', () => cleanDuplicateEvidence().catch((error) => setMessage(`중복 화면 정리 실패: ${error.message}`, true)));
-  for (const button of [elements.exportEvidenceQuick, elements.exportEvidenceCompletion]) {
-    button.addEventListener('click', () => exportEvidenceOnly().catch((error) => setMessage(`증적 ZIP 생성 실패: ${error.message}`, true)));
-  }
   elements.evidenceSearch.addEventListener('input', renderEvidence);
   window.addEventListener('resize', scheduleMappingLinks);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && pendingMapEvidenceIds) {
+      setPendingMapping(null);
+      setMessage('연결을 취소했습니다.');
+    }
+  });
   for (const eventName of ['dragenter', 'dragover']) {
     elements.evidenceDropZone.addEventListener(eventName, (event) => { event.preventDefault(); elements.evidenceDropZone.classList.add('dragging'); });
   }
@@ -3286,7 +3466,11 @@
   elements.deleteEvidenceDetail.addEventListener('click', () => removeEvidenceFromDetail().catch((error) => setMessage(`증적 삭제 실패: ${error.message}`, true)));
   elements.closeFeatureDetail.addEventListener('click', () => closeFeatureDrawer());
   elements.featureDetailBackdrop.addEventListener('click', () => closeFeatureDrawer());
-  elements.stageTabs.forEach((button) => button.addEventListener('click', () => goToStage(Number(button.dataset.stageIndex))));
+  elements.showInbox.addEventListener('click', () => { setNarrowPane('inbox'); scheduleMappingLinks(); });
+  elements.showFeatures.addEventListener('click', () => { setNarrowPane('features'); scheduleMappingLinks(); });
+  elements.openExport.addEventListener('click', openExportDialog);
+  elements.closeExport.addEventListener('click', () => elements.exportDialog.close());
+  elements.toggleView.addEventListener('click', () => switchView().catch((error) => setMessage(error.message, true)));
   elements.openReportSwitch.addEventListener('click', () => elements.reportSwitchDialog.showModal());
   elements.closeReportSwitch.addEventListener('click', () => elements.reportSwitchDialog.close());
   elements.openStorageDetail.addEventListener('click', () => elements.storageDetailDialog.showModal());
@@ -3368,7 +3552,7 @@
         extensionStorage.get('captureSession').then((stored) => {
           session = stored.captureSession || null;
           renderSession();
-          renderStage();
+          renderWorkspace();
           if (message.reason === 'tab-closed') setMessage('녹화 중인 탭이 닫혀 녹화를 종료했습니다.');
         }).catch(() => {});
       }

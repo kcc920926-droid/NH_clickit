@@ -97,116 +97,67 @@ test('editor shell exposes capture session, evidence inbox, feature result, and 
   assert.match(html, /editor\.js/);
 });
 
-test('editor stage renderer shows exactly one wizard-stage container at a time via hidden toggling', () => {
-  const html = fs.readFileSync(editorPath, 'utf8');
-  const script = fs.readFileSync(editorScriptPath, 'utf8');
 
-  assert.match(
-    html,
-    /<button[^>]*class=["'][^"']*\bstage-tab\b[^"']*\bactive\b[^"']*["'][^>]*id=["']stage-tab-capture["'][^>]*>/,
-    'capture tab should be active in the initial shell',
-  );
-  assert.match(script, /stageMappingResult:\s*byId\('stage-mapping-result'\)/);
 
-  const renderStageBody = extractFunctionBody(script, 'renderStage');
-  assert.match(
-    renderStageBody,
-    /container\.hidden\s*=\s*index\s*!==\s*activeStageIndex/,
-    'renderStage should toggle hidden on each STAGE_CONTAINERS entry based on activeStageIndex',
-  );
-});
-
-test('wizard tabs remain clickable and render their stage even before workflow data is complete', () => {
-  const script = fs.readFileSync(editorScriptPath, 'utf8');
-  const renderStageBody = extractFunctionBody(script, 'renderStage');
-  const goToStageBody = extractFunctionBody(script, 'goToStage');
-
-  assert.doesNotMatch(
-    renderStageBody,
-    /elements\.stageTabs\[index\]\.disabled\s*=\s*!reachable\[index\]/,
-    'stage tabs should not be disabled by reachability',
-  );
-  assert.doesNotMatch(
-    renderStageBody,
-    /activeStageIndex\s*=\s*CaptureITWizardStage\.navigate\(snapshot,\s*activeStageIndex,\s*activeStageIndex\)/,
-    'renderStage should not clamp direct tab navigation back to the reachable stage',
-  );
-  assert.doesNotMatch(
-    goToStageBody,
-    /CaptureITWizardStage\.navigate/,
-    'tab navigation should render the requested stage directly',
-  );
-});
-
-test('mapping-result stage places evidence inbox and testcase columns side by side statically, with the selected-evidence detail as a slide-in drawer', () => {
+test('작업대는 증적 수집함과 테스트케이스를 한 화면에 나란히 두고, 연결 증적은 옆에서 미끄러져 나오는 드로어로 연다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
   const css = fs.readFileSync(editorCssPath, 'utf8');
 
-  const stageMatch = html.match(/<section id=["']stage-mapping-result["'][\s\S]*?<\/section>\s*<\/section>/);
-  assert.ok(stageMatch, 'stage-mapping-result markup block should be found');
-  const stageHtml = stageMatch[0];
-
-  assert.match(stageHtml, /id=["']evidence-drop-zone["']/, 'evidence inbox should be statically inside stage-mapping-result');
-  assert.match(stageHtml, /class=["'][^"']*\bfeature-panel\b[^"']*["']/, 'feature panel should be statically inside stage-mapping-result');
-  assert.match(stageHtml, /id=["']feature-mapping-target["']/, 'feature mapping target drawer should be statically inside stage-mapping-result');
+  const workspaceMatch = html.match(/<main id=["']workspace["'][\s\S]*?<\/main>/);
+  assert.ok(workspaceMatch, '#workspace should be found');
+  const workspaceHtml = workspaceMatch[0];
+  assert.match(workspaceHtml, /id=["']evidence-drop-zone["']/, 'evidence inbox should be inside the workspace');
+  assert.match(workspaceHtml, /class=["'][^"']*\bfeature-panel\b[^"']*["']/, 'feature panel should be inside the workspace');
   assert.match(
-    stageHtml,
+    workspaceHtml,
     /<aside id=["']feature-mapping-target["'][^>]*class=["'][^"']*\bfeature-detail-drawer\b[^"']*["'][^>]*hidden[^>]*>/,
-    'feature-mapping-target should be an <aside> drawer, hidden by default until a testcase card is selected',
+    'feature-mapping-target should be a hidden <aside> drawer',
   );
+  assert.doesNotMatch(html, /class=["'][^"']*\bstage-tab\b/, 'stage tabs should be gone');
+  assert.doesNotMatch(html, /\bwizard-stage\b/, 'wizard-stage containers should be gone');
 
-  assert.match(
-    css,
-    /\.mapping-result-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1\.15fr\)/,
-    'mapping-result-grid should lay out evidence and testcase columns side by side',
-  );
-  assert.match(
-    css,
-    /\.feature-detail-drawer\s*{[^}]*position:\s*fixed/,
-    'feature-detail-drawer should be a fixed-position slide-in panel independent of the column grid',
-  );
-  assert.match(
-    css,
-    /\.feature-detail-drawer\.open\s*{[^}]*transform:\s*translateX\(0\)/,
-    'feature-detail-drawer should slide into view when opened',
-  );
+  assert.match(css, /\.workspace-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1\.1fr\)/, 'wide layout shows both lists side by side');
+  assert.match(css, /\.feature-detail-drawer\s*{[^}]*position:\s*fixed/);
+  assert.match(css, /\.feature-detail-drawer\.open\s*{[^}]*transform:\s*translateX\(0\)/);
 });
 
-test('capture mode selection UI is removed from the default screen; a single recording CTA drives IDLE/RECORDING state', () => {
+test('좁은 폭(사이드 패널)에서는 한 목록만 보이고 전환 버튼으로 오간다', () => {
+  const html = fs.readFileSync(editorPath, 'utf8');
+  const css = fs.readFileSync(editorCssPath, 'utf8');
+  const script = fs.readFileSync(editorScriptPath, 'utf8');
+
+  assert.match(html, /<main id=["']workspace["'][^>]*data-pane=["']inbox["']/);
+  for (const id of ['show-inbox', 'show-features']) assert.match(html, new RegExp(`id=["']${id}["'][^>]*aria-pressed`));
+  assert.match(css, /@media \(max-width: 759px\)[\s\S]*\.workspace\[data-pane="inbox"\] \.feature-panel, \.workspace\[data-pane="features"\] \.inbox-panel \{ display: none; \}/);
+  assert.match(css, /@media \(max-width: 759px\)[\s\S]*\.mapping-link-layer \{ display: none; \}/);
+  assert.doesNotMatch(css, /body\s*{[^}]*min-width:\s*1000px/, 'the page must fit a side panel');
+  const setPaneBody = extractFunctionBody(script, 'setNarrowPane');
+  assert.match(setPaneBody, /elements\.workspace\.dataset\.pane = narrowPane/);
+});
+
+test('확장 페이지의 기본 글자 크기(75%)를 body에서 되돌린다', () => {
+  const css = fs.readFileSync(editorCssPath, 'utf8');
+  assert.match(css, /\nbody\s*{[^}]*font-size:\s*13px/);
+});
+
+test('수집 줄: 녹화 버튼 하나와 이미지 불러오기, 붙여넣기 안내, 녹화 중 현황 한 줄', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
   const script = fs.readFileSync(editorScriptPath, 'utf8');
 
-  // 캡처 모드(이벤트/컨텍스트) 선택 UI는 기본 화면에서 완전히 제거되었다(iOS 원칙 1, 2).
-  // 내부 저장 계약을 위한 hidden 값 보관용 <select>만 남는다.
-  assert.match(
-    html,
-    /<select[^>]*id=["']capture-mode["'][^>]*hidden[^>]*>/,
-    'capture-mode value carrier should remain hidden for existing session logic',
-  );
-  assert.doesNotMatch(html, /role=["']radiogroup["']/, 'mode selection radiogroup should no longer be exposed');
-  assert.doesNotMatch(html, /data-capture-mode=["']event["']/, 'event/context mode toggle buttons should be removed');
-  assert.doesNotMatch(html, /data-capture-mode=["']context["']/, 'event/context mode toggle buttons should be removed');
-  assert.doesNotMatch(html, /class=["'][^"']*\bmode-toggle\b/, 'mode-toggle slider markup should be removed');
-
-  // 첫 화면은 큰 제목 + 짧은 설명 + 단일 primary CTA만 강조한다(iOS 원칙 3, 7).
-  assert.match(html, /테스트 화면을 녹화하세요/, 'idle screen should show the single-action title');
-  assert.match(html, /id=["']toggle-session["'][^>]*>녹화 시작<\/button>/, 'primary CTA should read 녹화 시작');
-  assert.match(html, /기존 이미지 불러오기/, 'secondary action should read 기존 이미지 불러오기');
-  assert.match(html, /중요한 영역은 Ctrl\+Shift\+클릭으로 직접 지정할 수 있습니다\./, 'manual pin should be a small supplementary hint');
-  assert.doesNotMatch(html, /이벤트 모드는 클릭·제출·화면 전환을 완료 대기 없이 캡처합니다/);
-
-  // 녹화 중 상태에서는 '녹화 중' pill + 종료 CTA + 수집 현황 4개 숫자를 보여준다.
-  assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
-  assert.match(html, /id=["']recording-summary["'][^>]*hidden[^>]*>/);
-  for (const id of ['recording-summary-screens', 'recording-summary-inputs', 'recording-summary-results', 'recording-summary-ai-ready']) {
-    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
-  }
+  assert.match(html, /<select[^>]*id=["']capture-mode["'][^>]*hidden[^>]*>/, 'capture-mode value carrier stays hidden');
+  assert.doesNotMatch(html, /role=["']radiogroup["']/);
+  assert.doesNotMatch(html, /data-capture-mode=/);
+  assert.match(html, /<section id=["']capture-bar["'][^>]*class=["'][^"']*capture-first-panel/);
+  assert.match(html, /테스트 화면을 녹화하세요/);
+  assert.match(html, /id=["']toggle-session["'][^>]*>녹화 시작<\/button>/);
+  assert.match(html, />이미지 불러오기<input id=["']image-import["']/);
+  assert.match(html, /중요한 영역은 Ctrl\+Shift\+클릭으로 직접 지정할 수 있습니다\./);
+  assert.match(html, /<p id=["']recording-summary["'][^>]*hidden/);
 
   assert.match(script, /function\s+renderSession\s*\(\s*\)/);
   assert.match(script, /function\s+computeRecordingSummary\s*\(\s*\)/);
   assert.match(script, /function\s+renderRecordingSummary\s*\(/);
-  assert.doesNotMatch(script, /captureModeToggle/, 'captureModeToggle references should be removed');
-  assert.doesNotMatch(script, /captureModeButtons/, 'captureModeButtons references should be removed');
+  assert.doesNotMatch(script, /captureModeToggle|captureModeButtons/);
 });
 
 test('editor uses the real report exporter rather than a placeholder action', () => {
@@ -355,7 +306,7 @@ test('editor shell exposes quick-mapping and report-draft-suggestion dialog elem
   }
 });
 
-test('storage-detail-dialog contains all six storage fields and three storage action buttons', () => {
+test('storage-detail-dialog contains all six storage fields and two download buttons', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
 
   const dialogMatch = html.match(/<dialog id=["']storage-detail-dialog["'][\s\S]*?<\/dialog>/);
@@ -371,7 +322,6 @@ test('storage-detail-dialog contains all six storage fields and three storage ac
     'storage-last-export-path',
     'show-last-download',
     'show-download-folder',
-    'export-evidence-only',
   ]) {
     assert.match(
       dialogHtml,
@@ -397,14 +347,14 @@ test('llm-settings-dialog contains the five LLM configuration fields', () => {
   }
 });
 
-test('llm-settings-dialog is titled "LLM 설정" and clarifies which network each adapter targets', () => {
+test('llm-settings-dialog is titled "AI 설정" and clarifies which network each adapter targets', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
 
   const dialogMatch = html.match(/<dialog id=["']llm-settings-dialog["'][\s\S]*?<\/dialog>/);
   assert.ok(dialogMatch, 'llm-settings-dialog markup block should be found');
   const dialogHtml = dialogMatch[0];
 
-  assert.match(dialogHtml, /<strong>LLM 설정<\/strong>/, 'dialog heading should read LLM 설정');
+  assert.match(dialogHtml, /<h2>AI 설정<\/h2>/, 'dialog heading should read AI 설정');
   assert.doesNotMatch(dialogHtml, /내부망 LLM 증적 추천 설정/, 'old dialog title should no longer appear');
 
   assert.match(
@@ -519,31 +469,6 @@ test('editor shell no longer displays retired English eyebrow labels or "기능 
   assert.equal(html.includes('기능 명세'), false, '기능 명세 phrasing should not appear');
 });
 
-test('editor shell has three wizard-stage containers with only stage-capture visible by default', () => {
-  const html = fs.readFileSync(editorPath, 'utf8');
-
-  const stageIds = [
-    'stage-capture',
-    'stage-mapping-result',
-    'stage-completion',
-  ];
-
-  for (const stageId of stageIds) {
-    const sectionMatch = html.match(new RegExp(`<section id=["']${stageId}["'][^>]*>`));
-    assert.ok(sectionMatch, `<section id="${stageId}"> should be found`);
-    const openTag = sectionMatch[0];
-
-    assert.match(openTag, /class=["'][^"']*wizard-stage[^"']*["']/, `${stageId} should have wizard-stage class`);
-
-    if (stageId === 'stage-capture') {
-      assert.doesNotMatch(openTag, /\bhidden\b/, 'stage-capture should not start hidden');
-    } else {
-      assert.match(openTag, /\bhidden\b/, `${stageId} should start hidden`);
-    }
-  }
-
-  assert.doesNotMatch(html, new RegExp('id=["\']stage-mapping["\']'), 'standalone mapping stage should be removed');
-});
 
 test('editor.html no longer contains the literal ">OFF<"/">ON<" status markers now that renderSession() renders Korean text (deferred check from Task 4.4)', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
@@ -552,30 +477,17 @@ test('editor.html no longer contains the literal ">OFF<"/">ON<" status markers n
   assert.equal(html.includes('>ON<'), false, '>ON< should not appear in editor.html');
 });
 
-test('renderSession() shows 녹화 중 pill and 녹화 시작/녹화 종료 CTA text rather than English ON/OFF or 자동캡쳐 wording', () => {
+test('renderSession()은 녹화 상태를 빨간 점과 한국어 문구로 보여 준다', () => {
   const script = fs.readFileSync(path.resolve(__dirname, '../extension/editor.js'), 'utf8');
   const html = fs.readFileSync(editorPath, 'utf8');
 
   assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
-  assert.match(html, /id=["']toggle-session["'][^>]*data-primary-action=["']recording-session["'][^>]*>녹화 시작<\/button>/);
-
-  assert.match(
-    script,
-    /elements\.sessionStatus\.textContent = active \? '녹화 중' : starting \? '녹화 시작 중…' : '';/,
-    'renderSession should set the 녹화 중 pill text',
-  );
-  assert.match(
-    script,
-    /elements\.toggleSession\.textContent = starting \? '녹화 시작 중…' : active \? '녹화 종료' : '녹화 시작';/,
-    'renderSession should set the primary CTA text',
-  );
-  assert.doesNotMatch(
-    script,
-    /textContent = active \? 'ON' : 'OFF'/,
-    'renderSession should not fall back to English ON/OFF text',
-  );
-  assert.doesNotMatch(html, /자동캡쳐/, '자동캡쳐 wording should no longer appear in the default screen');
-  assert.doesNotMatch(script, /'자동캡쳐/, '자동캡쳐 wording should no longer appear in editor.js UI strings');
+  const body = extractFunctionBody(script, 'renderSession');
+  assert.match(body, /elements\.sessionStatus\.className = `rec-dot \$\{active \? 'is-on'/);
+  assert.match(body, /elements\.toggleSession\.textContent = starting \? '시작 중…' : active \? '녹화 종료' : '녹화 시작';/);
+  assert.doesNotMatch(script, /textContent = active \? 'ON' : 'OFF'/);
+  assert.doesNotMatch(html, /자동캡쳐/);
+  assert.doesNotMatch(script, /'자동캡쳐/);
 });
 
 test('existing handler function names and domain/LLM call sites still exist in editor.js', () => {
@@ -680,8 +592,8 @@ test('editor shell uses testcase wording across feature list and card-integrated
   );
   assert.match(
     html,
-    /id=["']no-feature["'][^>]*>테스트케이스를 추가하십시오\./,
-    'no-feature empty state should read 테스트케이스를 추가하십시오.',
+    /id=["']no-feature["'][^>]*>테스트케이스가 없습니다\./,
+    'no-feature empty state should explain how a testcase gets created',
   );
   assert.match(
     html,
@@ -723,19 +635,13 @@ test('feature cards expose testcase title as an editable input and keep inline t
   assert.match(script, /function\s+saveFeatureTitle\s*\(/, 'title save helper should exist');
 });
 
-test('mapping-result shell labels the merged stage as mapping and result entry', () => {
+test('작업대에는 증적과 테스트케이스를 잇는 연결선 SVG 층이 있다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
-
-  assert.match(
-    html,
-    /<h2 id=["']mapping-result-heading["']>증적 매핑과 테스트케이스 결과<\/h2>/,
-    'merged stage heading should describe evidence mapping and testcase result entry',
-  );
-  assert.match(
-    html,
-    /<svg id=["']mapping-link-layer["'] class=["']mapping-link-layer["'] aria-hidden=["']true["']><\/svg>/,
-    'merged stage should include an SVG layer for evidence-to-testcase mapping links',
-  );
+  const script = fs.readFileSync(editorScriptPath, 'utf8');
+  assert.match(html, /<svg id=["']mapping-link-layer["'] class=["']mapping-link-layer["'] aria-hidden=["']true["']><\/svg>/);
+  const body = extractFunctionBody(script, 'renderMappingLinks');
+  assert.match(body, /if \(isNarrow\(\)\) return;/, '좁은 폭에서는 연결선을 그리지 않는다');
+  assert.match(body, /elements\.workspace\.getBoundingClientRect\(\)/);
 });
 
 test('Evidence Inbox does not show image drag-and-drop helper copy', () => {
@@ -752,7 +658,7 @@ test('collected-evidence screen uses 수집된 증적 wording and renders test-f
   const script = fs.readFileSync(editorScriptPath, 'utf8');
 
   assert.doesNotMatch(html, />Evidence Inbox</, 'Evidence Inbox literal should no longer appear in the default UI');
-  assert.match(html, /<h2 id=["']inbox-heading["']>수집된 증적<\/h2>/);
+  assert.match(html, /<h2 id=["']inbox-heading["']>증적 수집함<\/h2>/);
 
   assert.match(script, /function\s+evidenceRoleBadge\s*\(/, 'evidenceRoleBadge() should exist to render role badges on evidence cards');
   assert.match(script, /function\s+evidenceStepLabel\s*\(/, 'evidenceStepLabel() should exist to render human-readable step names instead of raw triggerType');
@@ -790,54 +696,42 @@ test('evidence review mapping controls use icons instead of text-only buttons', 
     'mapping SVG layer should not use percentage height because it can expand the stage while scrolling');
 });
 
-test('merged stage opens the selected-evidence mapping target only via an explicit drawer-entry button, and exposes verdict as a clickable status pill', () => {
+test('연결 증적 드로어는 전용 버튼으로만 열고, 판정은 ✓ PASS / ✕ FAIL / ○ 미판정 버튼 세 개로 바로 고른다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
   const script = fs.readFileSync(editorScriptPath, 'utf8');
   const css = fs.readFileSync(editorCssPath, 'utf8');
 
-  // feature-mapping-target은 #feature-editor-panel과 무관한 독립 슬라이드 드로어다. 기본값은 hidden이며,
-  // 카드를 선택(클릭)하는 것만으로는 열리지 않는다 - 테스트케이스명 옆 판정 pill 다음에 놓인 전용
-  // "선택된 증적 보기" 버튼(openFeatureDrawer)을 눌러야만 drawerOpen이 true가 되어 열린다.
-  const sectionMatch = html.match(/<aside id=["']feature-mapping-target["'][^>]*>/);
-  assert.ok(sectionMatch, '#feature-mapping-target drawer should exist');
-  assert.match(
-    sectionMatch[0],
-    /\bhidden\b/,
-    'feature-mapping-target should start hidden until the drawer-entry button is clicked',
-  );
-  assert.match(script, /function\s+setFeatureDrawerOpen\s*\(/, 'setFeatureDrawerOpen() should toggle the drawer visibility');
-  assert.match(script, /function\s+openFeatureDrawer\s*\(/, 'openFeatureDrawer() should be the explicit entry point for the drawer');
-  assert.match(script, /let\s+drawerOpen\s*=\s*false/, 'drawerOpen should be a state independent from card selection');
-
-  const selectFeatureBody = extractFunctionBody(script, 'selectFeature');
-  assert.doesNotMatch(
-    selectFeatureBody,
-    /drawerOpen\s*=\s*true/,
-    'selecting a card (clicking it) should not open the drawer by itself',
-  );
+  assert.match(html, /<aside id=["']feature-mapping-target["'][^>]*\bhidden\b/);
+  assert.match(script, /function\s+setFeatureDrawerOpen\s*\(/);
+  assert.match(script, /function\s+openFeatureDrawer\s*\(/);
+  assert.match(script, /let\s+drawerOpen\s*=\s*false/);
+  assert.doesNotMatch(extractFunctionBody(script, 'selectFeature'), /drawerOpen\s*=\s*true/, 'selecting a card should not open the drawer');
 
   const featureCardBody = extractFunctionBody(script, 'featureCard');
-  assert.match(
-    featureCardBody,
-    /iconButton\('선택된 증적 보기',\s*'eye',\s*\(\)\s*=>\s*openFeatureDrawer\(feature\.id\)\)/,
-    'feature card header should render a dedicated drawer-entry button next to the verdict pill',
-  );
+  assert.match(featureCardBody, /iconButton\('연결된 증적 보기',\s*'eye',\s*\(\)\s*=>\s*openFeatureDrawer\(feature\.id\)\)/);
+  assert.match(featureCardBody, /statusMark\(feature\)/, 'card header shows the verdict as a glyph mark');
+  assert.match(featureCardBody, /verdictControl\(feature\)/, 'card footer has the three verdict buttons');
 
-  assert.doesNotMatch(html, /id=["']verdict["']/, 'standalone #verdict select should be removed');
-  assert.doesNotMatch(html, /data-verdict-value/, 'the three-way verdict toggle markup should be removed');
-  assert.match(script, /function\s+verdictPill\s*\(/, 'verdictPill() should build the clickable status pill');
-  assert.match(script, /function\s+cycleVerdict\s*\(/, 'cycleVerdict() should advance PASS -> FAIL -> N/A on click');
-  assert.match(css, /\.feature-status-pill\.verdict-pass/);
-  assert.match(css, /\.feature-status-pill\.verdict-fail/);
-  assert.match(css, /\.feature-status-pill\.verdict-na/);
+  const controlBody = extractFunctionBody(script, 'verdictControl');
+  assert.match(controlBody, /setAttribute\('aria-pressed', String\(status === verdict\.value\)\)/);
+  assert.match(controlBody, /setVerdict\(feature, verdict\.value\)/);
+  assert.match(script, /\{ value: 'PASS', glyph: '✓'/);
+  assert.match(script, /\{ value: 'FAIL', glyph: '✕'/);
+  assert.match(script, /\{ value: null, glyph: '○', label: '미판정'/);
+  assert.match(extractFunctionBody(script, 'setVerdict'), /feature\.result\.status = value;/);
+  assert.doesNotMatch(script, /function\s+cycleVerdict|function\s+verdictPill|feature-status-pill/, 'the cycling pill is gone');
+  assert.match(css, /\.verdict-option\[aria-pressed="true"\]\.verdict-pass/);
+  assert.match(css, /\.verdict-option\[aria-pressed="true"\]\.verdict-fail/);
+  assert.match(css, /\.st-pass/);
+  assert.doesNotMatch(css, /linear-gradient\(120deg/, 'no rainbow gradient while AI runs');
 });
 
-test('evidence inbox graphs and detail viewer are full-width and navigable', () => {
+test('증적 세트는 한 줄씩 쌓이고 상세 보기는 앞뒤로 넘길 수 있다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
   const css = fs.readFileSync(editorCssPath, 'utf8');
-
-  assert.match(css, /#evidence-inbox\s*{[^}]*grid-template-columns:\s*1fr/);
-  assert.match(css, /#evidence-inbox \.capture-graph\s*{[^}]*width:\s*100%/);
+  assert.match(html, /<div id=["']evidence-inbox["'] class=["']evidence-list["']/);
+  assert.match(css, /\.evidence-list\s*{[^}]*display:\s*grid/);
+  assert.match(css, /\.capture-graph\s*{[^}]*width:\s*100%/);
   assert.match(html, /id=["']previous-evidence-detail["']/);
   assert.match(html, /id=["']next-evidence-detail["']/);
 });
@@ -855,102 +749,49 @@ test('preview-report/export-report/open-save-project ids each appear exactly onc
   }
 });
 
-test('preview-report/export-report/open-save-project buttons live inside stage-completion, not stage-mapping-result', () => {
+test('목적은 내보내기 창에서 고른다: 문서 ZIP·미리보기·증적만 ZIP·보고서 정보가 한 곳에 있다', () => {
   const html = fs.readFileSync(editorPath, 'utf8');
-
-  const mappingResultMatch = html.match(/<section id=["']stage-mapping-result["'][\s\S]*?(?=<section id=["']stage-completion["'])/);
-  assert.ok(mappingResultMatch, 'stage-mapping-result markup block should be found');
-  const mappingResultHtml = mappingResultMatch[0];
-
-  for (const id of ['preview-report', 'export-report', 'open-save-project']) {
-    assert.doesNotMatch(
-      mappingResultHtml,
-      new RegExp(`id=["']${id}["']`),
-      `#${id} should no longer live inside stage-mapping-result`,
-    );
-  }
-
-  const completionMatch = html.match(/<section id=["']stage-completion["'][\s\S]*?(?=<\/main>)/);
-  assert.ok(completionMatch, 'stage-completion markup block should be found');
-  const completionHtml = completionMatch[0];
-
-  for (const id of ['preview-report', 'export-report', 'open-save-project']) {
-    assert.match(
-      completionHtml,
-      new RegExp(`id=["']${id}["']`),
-      `#${id} should live inside stage-completion`,
-    );
-  }
-});
-
-test('wizard-stage.js planActions no longer assigns preview-report/export-report/open-save-project to stage index 1 (mapping-result)', () => {
-  const { planActions } = require('../extension/shared/wizard-stage.js');
-
-  const plan = planActions(1, { sessionActive: true, currentFeatureHasMappedEvidence: true });
-  const allActionIds = [plan.primary, ...plan.secondary].filter(Boolean);
-
-  for (const actionId of ['preview-report', 'export-report', 'open-save-project']) {
-    assert.equal(
-      allActionIds.includes(actionId),
-      false,
-      `mapping-result stage (index 1) should no longer plan the "${actionId}" action`,
-    );
-  }
-
-  // Completion stage(index 2)가 이 세 액션의 유일한 소유자가 되어야 한다.
-  const completionPlan = planActions(2, { sessionActive: true, currentFeatureHasMappedEvidence: true });
-  const completionActionIds = [completionPlan.primary, ...completionPlan.secondary].filter(Boolean);
-  for (const actionId of ['preview-report', 'export-report', 'open-save-project']) {
-    assert.equal(
-      completionActionIds.includes(actionId),
-      true,
-      `completion stage (index 2) should plan the "${actionId}" action`,
-    );
-  }
-});
-
-test('completion stage exposes six summary elements with the completion-summary-* class pattern', () => {
-  const html = fs.readFileSync(editorPath, 'utf8');
-
-  for (const id of [
-    'completion-summary-features',
-    'completion-summary-pass',
-    'completion-summary-fail',
-    'completion-summary-na',
-    'completion-summary-evidence',
-    'completion-summary-ai-images',
-  ]) {
-    assert.match(html, new RegExp(`id=["']${id}["'][^>]*class=["']completion-summary-value["']`), `#${id} should exist with completion-summary-value class`);
-  }
-});
-
-test('renderCompletionSummary computes feature/verdict/evidence/AI-image counts from editorState', () => {
   const script = fs.readFileSync(editorScriptPath, 'utf8');
 
-  assert.match(script, /function\s+computeCompletionSummary\s*\(\s*\)/, 'computeCompletionSummary() should exist');
-  assert.match(script, /function\s+renderCompletionSummary\s*\(\s*\)/, 'renderCompletionSummary() should exist');
+  const dialogMatch = html.match(/<dialog id=["']export-dialog["'][\s\S]*?<\/dialog>/);
+  assert.ok(dialogMatch, '#export-dialog should exist');
+  for (const id of ['export-report', 'preview-report', 'export-evidence-only', 'open-save-project', 'validation-warnings', 'template-options']) {
+    assert.match(dialogMatch[0], new RegExp(`id=["']${id}["']`), `#${id} should live in the export dialog`);
+  }
+  for (const id of ['export-evidence-quick', 'export-evidence-completion']) {
+    assert.doesNotMatch(html, new RegExp(`id=["']${id}["']`), `#${id} duplicate entry point should be gone`);
+  }
+  // 상태 줄에 준비 상태와 내보내기 버튼
+  assert.match(html, /<footer class=["']status-bar["'][\s\S]*id=["']readiness-summary["'][\s\S]*id=["']open-export["']/);
+  assert.match(script, /elements\.openExport\.addEventListener\('click', openExportDialog\)/);
+  const warningsBody = extractFunctionBody(script, 'renderWarnings');
+  assert.match(warningsBody, /focusFeature\(entry\.featureId\)/, 'a remaining item jumps to its testcase');
+});
 
+
+test('내보내기 요약은 completion-summary-* 값 여섯 개를 보여 준다', () => {
+  const html = fs.readFileSync(editorPath, 'utf8');
+  for (const id of ['completion-summary-features', 'completion-summary-pass', 'completion-summary-fail', 'completion-summary-na', 'completion-summary-evidence', 'completion-summary-total']) {
+    assert.match(html, new RegExp(`id=["']${id}["'][^>]*class=["']completion-summary-value["']`), `#${id} should exist`);
+  }
+});
+
+test('renderCompletionSummary는 테스트케이스·판정·연결 증적·전체 증적 수를 editorState에서 계산한다', () => {
+  const script = fs.readFileSync(editorScriptPath, 'utf8');
   const computeBody = extractFunctionBody(script, 'computeCompletionSummary');
-  assert.match(computeBody, /feature\.result\.status\s*===\s*['"]PASS['"]/, 'summary should count PASS results');
-  assert.match(computeBody, /feature\.result\.status\s*===\s*['"]FAIL['"]/, 'summary should count FAIL results');
-  assert.match(computeBody, /llmImageDataUrl/, 'summary should count evidence with an AI-ready image');
+  assert.match(computeBody, /feature\.result\.status\s*===\s*['"]PASS['"]/);
+  assert.match(computeBody, /feature\.result\.status\s*===\s*['"]FAIL['"]/);
   assert.match(computeBody, /new Set\(\)/, 'mapped evidence count should be deduplicated via a Set');
+  assert.match(computeBody, /total: evidenceList\.length/);
 
   const renderBody = extractFunctionBody(script, 'renderCompletionSummary');
-  for (const elementKey of [
-    'completionSummaryFeatures',
-    'completionSummaryPass',
-    'completionSummaryFail',
-    'completionSummaryNa',
-    'completionSummaryEvidence',
-    'completionSummaryAiImages',
-  ]) {
-    assert.match(renderBody, new RegExp(`elements\\.${elementKey}\\.textContent`), `renderCompletionSummary should set elements.${elementKey}.textContent`);
+  for (const key of ['completionSummaryFeatures', 'completionSummaryPass', 'completionSummaryFail', 'completionSummaryNa', 'completionSummaryEvidence', 'completionSummaryTotal']) {
+    assert.match(renderBody, new RegExp(`elements\\.${key}\\.textContent`));
   }
-
-  // renderStage()가 매번 renderCompletionSummary()를 호출해 완료 단계 데이터가 항상 최신 상태로 유지되는지 확인한다.
-  const renderStageBody = extractFunctionBody(script, 'renderStage');
-  assert.match(renderStageBody, /renderCompletionSummary\(\)/, 'renderStage should call renderCompletionSummary to keep the completion stage in sync');
+  const workspaceBody = extractFunctionBody(script, 'renderWorkspace');
+  for (const call of ['renderGuidance()', 'renderReadiness()', 'renderCompletionSummary()', 'scheduleMappingLinks()']) {
+    assert.ok(workspaceBody.includes(call), `renderWorkspace should call ${call}`);
+  }
 });
 
 test('computeCompletionSummary example: mixed PASS/FAIL/N/A features and deduplicated evidence with AI images', () => {
@@ -988,12 +829,12 @@ test('computeCompletionSummary example: mixed PASS/FAIL/N/A features and dedupli
   for (const feature of features) {
     for (const evidenceId of feature.result.evidenceIds) mappedEvidenceIds.add(evidenceId);
   }
-  const aiImages = evidence.filter((item) => Boolean(item.llmImageDataUrl)).length;
+  const total = evidence.length;
 
   assert.equal(features.length, 3);
   assert.equal(pass, 1);
   assert.equal(fail, 1);
   assert.equal(na, 1);
   assert.equal(mappedEvidenceIds.size, 3, 'EV-1/EV-2/EV-3 매핑, EV-2 중복은 한 번만 계산되어야 함');
-  assert.equal(aiImages, 3, 'llmImageDataUrl이 있는 증적 3개(EV-1, EV-3, EV-4)가 카운트되어야 함');
+  assert.equal(total, 4, '전체 증적은 연결 여부와 상관없이 모두 센다');
 });

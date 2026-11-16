@@ -301,6 +301,15 @@ chrome.runtime.onInstalled.addListener(async () => {
   });
 });
 
+// 아이콘을 누르면 테스트 화면 옆 사이드 패널에 작업대를 연다. 탭 왕복이 없어 녹화 첫 장이
+// 작업대 자신으로 찍히는 일도 없다. 사이드 패널이 없는 브라우저에서는 아래 onClicked가 탭으로 연다
+// (openPanelOnActionClick이 켜져 있으면 onClicked는 불리지 않는다).
+function enableSidePanel() {
+  if (!chrome.sidePanel || typeof chrome.sidePanel.setPanelBehavior !== 'function') return;
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+}
+enableSidePanel();
+
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('editor.html') });
 });

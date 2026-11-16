@@ -70,7 +70,7 @@ test('Requirement 1.6 - 매핑되지 않은 Test_Result_Set을 가진 검증 항
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요\.'/,
     '매핑된 증적(Test_Result_Set)이 없으면 매핑 유도 문구를 textContent에 설정해야 한다(Requirement 1.6)',
   );
 
@@ -93,7 +93,7 @@ test('Requirement 3.5 - 첫 매핑 전/후로 featureMappingGuidance 문구가 �
   // 매핑 전(evidenceIds.length === 0) 분기
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요\.'/,
     '매핑 전에는 매핑 유도 문구를 설정해야 한다',
   );
   // 매핑 후(evidenceIds.length > 0, 즉 첫 매핑 직후) 분기
@@ -113,15 +113,15 @@ test('Requirement 3.5 - 첫 매핑 전/후로 featureMappingGuidance 문구가 �
 // 회귀 방지(Task 6.4 연동 확인): 매핑/세션/검증 항목 추가와 같이 stage 도달 가능성에 영향을 주는
 // 동작을 수행하는 함수들은 반드시 renderStage()를 호출해 안내/탭/버튼 상태를 다시 계산해야 한다.
 // 이 호출이 빠지면 Requirement 1.5/1.6/3.5가 요구하는 "안내 문구가 바뀐다"는 동작이 깨진다.
-test('회귀 방지 - toggleSession/addFeature/mapEvidenceIds/submitQuickMapping은 renderStage()를 호출한다', () => {
+test('회귀 방지 - toggleSession/addFeature/mapEvidenceIds/submitQuickMapping은 renderWorkspace()를 호출한다', () => {
   const functionsThatMustRenderStage = ['toggleSession', 'addFeature', 'mapEvidenceIds', 'submitQuickMapping'];
 
   for (const functionName of functionsThatMustRenderStage) {
     const body = extractFunctionBody(source, functionName);
     assert.match(
       body,
-      /renderStage\(\);/,
-      `${functionName}은 renderStage();를 호출해 stage 안내/도달 가능성을 갱신해야 한다`,
+      /renderWorkspace\(\);/,
+      `${functionName}은 renderWorkspace();를 호출해 안내와 준비 상태를 갱신해야 한다`,
     );
   }
 });

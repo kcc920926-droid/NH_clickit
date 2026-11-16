@@ -1,383 +1,317 @@
-:root { color-scheme: light; font-family: Inter, Pretendard, "Segoe UI", sans-serif; color: #172033; background: #eef2f7; }
+/* CaptureIT 작업대. 한 화면에 수집 줄, 작업대(증적 수집함 | 테스트케이스), 상태 줄을 둔다.
+   사이드 패널(좁은 폭)과 탭(넓은 폭)에서 같은 페이지를 쓰고 레이아웃만 폭에 따라 바뀐다.
+   색은 상태를 나타낼 때만 쓴다: 녹화(빨강), 판정(✓ 초록 / ✕ 빨강 / ○ 회색), 주 행동(파랑). */
+:root {
+  color-scheme: light;
+  --ink: #1d2126;
+  --ink-2: #4a525c;
+  --ink-3: #7b838d;
+  --line: #e1e4e8;
+  --line-2: #eef0f2;
+  --bg: #f5f6f7;
+  --surface: #fff;
+  --accent: #1f5bd8;
+  --accent-ink: #1849ad;
+  --accent-soft: #edf2fd;
+  --rec: #c62828;
+  --pass: #1e7a46;
+  --pass-soft: #e8f4ec;
+  --fail: #b3261e;
+  --fail-soft: #fbeceb;
+  --warn-ink: #7a4b00;
+  --warn-soft: #fff7e3;
+  --radius: 6px;
+  font-family: Pretendard, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+}
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { min-width: 1000px; margin: 0; }
-button, input, textarea, select { font: inherit; }
-/* Header 단순화: 조용한 헤더 - 브랜드/저장 상태/증적 수만 상시 노출하고, 나머지 관리 기능은
-   더보기 메뉴 뒤로 숨긴다(iOS 원칙 4 - 고급 기능은 필요할 때만 드러낸다). */
-.app-header { display: flex; align-items: center; gap: 12px; padding: 18px 28px; color: #fff; background: #0f172a; }
-.app-header h1 { margin: 0; font-size: 21px; }
-.app-header p { margin: 2px 0 0; color: #aeb9cc; font-size: 13px; }
-.app-header .save-status { margin-left: auto; color: #aeb9cc; }
-.header-evidence-count { color: #aeb9cc; font-size: 13px; }
-.more-menu-wrap { position: relative; }
-.more-menu-trigger { color: #cbd5e1; background: rgba(255, 255, 255, .08); }
-.more-menu-trigger:hover { color: #fff; background: rgba(255, 255, 255, .16); }
-.more-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; display: grid; min-width: 200px; padding: 6px; border: 1px solid #dbe2ec; border-radius: 12px; background: #fff; box-shadow: 0 18px 40px rgba(15, 23, 42, .18); }
-.more-menu-item { padding: 10px 12px; border: 0; border-radius: 8px; color: #172033; background: transparent; text-align: left; cursor: pointer; font-size: 13px; font-weight: 700; }
-.more-menu-item:hover { background: #eef2f7; }
+/* 확장 페이지에는 브라우저가 body { font-size: 75% }를 넣는다. 크기와 서체를 body에 직접 준다. */
+body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: inherit; font-size: 13px; background: var(--bg); }
+button, input, textarea, select { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Wizard_Stage 내비게이션과 탭 (Requirements 1.1, 1.2) */
-#wizard-stage-nav { display: flex; justify-content: center; gap: 6px; max-width: 1380px; margin: 0 auto; padding: 14px 24px 0; }
-.stage-tab { padding: 10px 16px; border: 0; border-bottom: 3px solid transparent; border-radius: 9px 9px 0 0; color: #64748b; background: transparent; cursor: pointer; font-size: 13px; font-weight: 800; }
-.stage-tab.active { color: #2563eb; border-bottom-color: #2563eb; background: #dbeafe; }
-.stage-tab:disabled { color: #cbd5e1; cursor: not-allowed; opacity: .6; }
-.stage-tab:not(:disabled):not(.active):hover { color: #172033; background: #e8edf4; }
-
-.layout { display: grid; grid-template-columns: 300px minmax(620px, 1fr); gap: 18px; max-width: 1380px; margin: 0 auto; padding: 24px; }
-.capture-first-panel { grid-column: 1 / -1; justify-self: center; width: min(100%, 860px); }
-.report-panel { grid-column: 1 / -1; }
-.panel { padding: 22px; border: 1px solid #dbe2ec; border-radius: 16px; background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .06); }
-
-/* Wizard_Stage 컨테이너 공통 레이아웃 (Requirements 1.1, 3.1, 3.2, 3.3, 3.4).
-   .capture-first-panel처럼 이미 .panel을 갖는 stage는 그 스타일을 그대로 쓰고,
-   .panel이 없는 신규 stage(mapping-result/completion)도 동일한 패널 형태로 보이도록
-   .wizard-stage 자체에 같은 시각적 처리를 준다(중복 선언은 캐스케이드상 무해함). */
-.wizard-stage { grid-column: 1 / -1; display: grid; gap: 18px; padding: 22px; border: 1px solid #dbe2ec; border-radius: 16px; background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .06); }
-
-/* Mapping_Result_Stage: Evidence Inbox(좌) + 테스트케이스 목록/결과 입력 폼(우)을 나란히 배치하고,
-   곡선 커넥터 SVG 레이어가 두 컬럼 위에 겹쳐져 매핑 상태를 시각화한다. */
-#stage-mapping-result { position: relative; overflow: hidden; }
-.mapping-result-grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; gap: 18px; }
-.mapping-result-column { display: grid; align-content: start; gap: 18px; }
-.mapping-result-column .panel { margin: 0; }
-.mapping-link-layer { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; overflow: hidden; }
-.mapping-link-path { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 7 6; }
-/* 현재 선택된 테스트케이스/증적과 직접 연관된 커넥터만 진한 파란색으로 강조하고, 나머지는
-   옅은 파란색으로 낮춘다(선택된 것이 없으면 전부 inactive 색을 쓴다). */
-.mapping-link-path.active { stroke: #2563eb; filter: drop-shadow(0 3px 6px rgba(37, 99, 235, .16)); }
-.mapping-link-path.inactive { stroke: #bfdbfe; }
-.mapping-link-dot { stroke: #fff; stroke-width: 2; }
-.mapping-link-dot.active { fill: #2563eb; }
-.mapping-link-dot.inactive { fill: #bfdbfe; }
-.mapping-link-dot.target.active { fill: #16a34a; }
-.mapping-link-dot.target.inactive { fill: #86efac; }
-.panel-heading { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
-.panel h2 { margin: 2px 0 0; font-size: 20px; }
-.panel h3 { margin: 24px 0 12px; }
-.eyebrow { color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
-label { display: grid; gap: 7px; color: #475569; font-size: 13px; font-weight: 700; }
-input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 9px; color: #172033; background: #fff; }
-/* LLM 설정: Adapter가 NH AI Gateway/OpenAI compatible이면 엔드포인트가 그 Adapter의 고정
-   대상으로 강제되고 읽기 전용이 된다 - 잘못된 엔드포인트를 직접 입력해 생기는 혼선을 막기 위함. */
-.input-locked { color: #64748b; background: #f1f5f9; cursor: not-allowed; }
-textarea { resize: vertical; }
-/* 첫 화면(IDLE)/녹화 중 화면(RECORDING) 단일 CTA 레이아웃 (iOS 원칙 3, 7, 10).
-   panel-heading/eyebrow 같은 관리 화면 톤을 없애고, 큰 제목 + 짧은 설명 + 강한 primary CTA
-   하나만 눈에 들어오도록 중앙 정렬한다. */
-.capture-first-panel { display: grid; justify-items: center; gap: 10px; padding: 56px 40px; text-align: center; }
-.capture-first-panel .status-pill { justify-self: center; }
-.capture-idle-title { margin: 4px 0 0; font-size: 28px; font-weight: 800; }
-.capture-idle-subtitle { max-width: 440px; margin: 0; color: #64748b; font-size: 14px; line-height: 1.6; }
-.capture-idle-cta { margin-top: 10px; padding: 14px 32px; font-size: 15px; }
-.capture-idle-secondary { margin-top: 2px; font-size: 12px; }
-.status-pill { padding: 5px 12px; border-radius: 999px; font-size: 11px; font-weight: 900; letter-spacing: .06em; }
-.status-pill-off { visibility: hidden; }
-.status-pill-recording { color: #fff; background: #dc2626; animation: captureit-recording-pulse 1.8s ease-in-out infinite; }
-@keyframes captureit-recording-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
-.recording-summary { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 10px; margin-top: 22px; }
-.recording-summary-item { display: grid; gap: 2px; padding: 12px 8px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
-.recording-summary-value { font-size: 20px; font-weight: 800; color: #172033; }
-.recording-summary-label { color: #64748b; font-size: 11px; font-weight: 700; }
-
-/* Completion_Stage: 완료 화면을 문서 생성 중심으로 재배치한다(iOS 원칙 3, 7 - 마지막 화면은
-   "지금 무엇을 완성했는지"와 "다음에 무엇을 눌러야 하는지"만 강하게 보여준다).
-   recording-summary와 동일한 카드형 통계 패턴을 재사용해 시각적 일관성을 유지한다. */
-.completion-panel { justify-items: center; padding: 56px 40px; text-align: center; }
-.completion-summary { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 10px; width: 100%; max-width: 860px; margin-top: 8px; }
-.completion-summary-item { display: grid; gap: 2px; padding: 12px 8px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
-.completion-summary-value { font-size: 20px; font-weight: 800; color: #172033; }
-.completion-summary-label { color: #64748b; font-size: 11px; font-weight: 700; }
-.completion-primary-cta { margin-top: 22px; padding: 14px 32px; font-size: 15px; }
-.completion-secondary-actions { display: flex; gap: 10px; margin-top: 4px; }
-.completion-panel .warning-box { width: 100%; max-width: 860px; text-align: left; }
-.form-grid { display: grid; grid-template-columns: 1fr 190px; gap: 14px; }
-.report-fields { grid-template-columns: 1.2fr .8fr .7fr; }
-.wide { grid-column: 1 / -1; }
-.report-toolbar { display: grid; grid-template-columns: minmax(280px, 1fr) auto auto; gap: 10px; align-items: end; margin-bottom: 18px; }
-.button { display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; border: 0; border-radius: 9px; font-weight: 800; cursor: pointer; }
-.button:disabled, button:disabled { cursor: default; opacity: .5; }
-.button-primary { color: #fff; background: #2563eb; }
-.button-primary:hover { background: #1d4ed8; }
-.button-secondary { color: #334155; background: #e8edf4; }
-.button-danger { color: #991b1b; background: #fee2e2; }
-.icon-button { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 9px; color: #1d4ed8; background: #dbeafe; cursor: pointer; font-size: 20px; font-weight: 900; }
-.icon-only { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 8px; color: #334155; background: #fff; cursor: pointer; }
-.icon-only:hover { color: #1d4ed8; background: #eff6ff; }
-.icon-only.danger { color: #b91c1c; }
-.icon-only:disabled { color: #cbd5e1; background: #f8fafc; }
-.icon-only svg, .icon-action-button svg, .icon-button svg { width: 18px; height: 18px; }
-.icon-action-button { min-width: 34px; min-height: 34px; padding: 7px; }
+/* ── 버튼 ───────────────────────────────────────────── */
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius); font-weight: 600; white-space: nowrap; cursor: pointer; }
+.button:disabled, button:disabled { cursor: default; opacity: .45; }
+.button-primary { color: #fff; background: var(--accent); }
+.button-primary:hover:not(:disabled) { background: var(--accent-ink); }
+.button-quiet, .button-secondary { border-color: var(--line); color: var(--ink); background: var(--surface); }
+.button-quiet:hover:not(:disabled), .button-secondary:hover:not(:disabled) { background: var(--line-2); }
+.button-danger { border-color: #f0c9c6; color: var(--fail); background: var(--surface); }
+.button-danger:hover:not(:disabled) { background: var(--fail-soft); }
+.text-button { padding: 4px 6px; border: 0; border-radius: 4px; color: var(--accent); background: transparent; font-weight: 600; cursor: pointer; }
+.text-button:hover:not(:disabled) { background: var(--accent-soft); }
+.icon-only { display: inline-grid; width: 28px; height: 28px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 4px; color: var(--ink-2); background: transparent; cursor: pointer; }
+.icon-only:hover:not(:disabled) { color: var(--ink); background: var(--line-2); }
+.icon-only.danger:hover:not(:disabled) { color: var(--fail); background: var(--fail-soft); }
+.icon-only svg, .icon-action-button svg { width: 16px; height: 16px; }
+.icon-action-button { min-width: 28px; min-height: 28px; padding: 5px; }
+.file-button { position: relative; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.file-button { font-size: 12px; }
-.session-panel .button { width: 100%; margin-top: 12px; }
-.storage-list { display: grid; gap: 10px; margin: 0; }
-.storage-list div { display: grid; grid-template-columns: 92px 1fr; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
-.storage-list div:last-child { border-bottom: 0; }
-.storage-list dt { color: #64748b; font-size: 12px; font-weight: 800; }
-.storage-list dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: #0f172a; font-size: 12px; }
-.storage-actions { display: grid; gap: 8px; margin-top: 14px; }
-.storage-actions .button { width: 100%; }
-.status { padding: 6px 9px; border-radius: 999px; font-size: 12px; font-weight: 900; }
-.status-off { color: #64748b; background: #e2e8f0; }
-.status-on { color: #166534; background: #dcfce7; }
-.hint { color: #64748b; font-size: 12px; line-height: 1.6; }
-.guidance-banner { max-width: 1380px; margin: 0 auto; padding: 0 24px; }
-.guidance-banner ul { display: grid; gap: 6px; margin: 12px 0 0; padding: 12px 16px; list-style: none; border: 1px solid #bfdbfe; border-radius: 12px; color: #1d4ed8; font-size: 12px; font-weight: 700; background: #eff6ff; }
-.guidance-banner li { margin: 0; }
-.save-status { color: #64748b; font-size: 12px; }
-.feature-list { display: grid; gap: 8px; }
-.feature-list:empty::before { content: "테스트케이스가 없습니다."; color: #94a3b8; font-size: 12px; }
-.feature-item { overflow: hidden; border: 1px solid #dbe2ec; border-radius: 10px; background: #f8fafc; }
-.feature-item.selected { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
-/* Auto_AI_Pipeline 진행 중 표시: 매핑 직후 "증적 설명 생성"/"테스트케이스 설명 자동 생성"이
-   백그라운드에서 실행되는 동안 카드 테두리에 움직이는 무지개 그라데이션을 준다(iOS 스타일 로딩
-   느낌). 완료/에러 상태에서는 이 애니메이션이 사라지고 체크리스트만 잠시 남는다. */
-.feature-item.ai-generating {
-  border-color: transparent;
-  background-image: linear-gradient(#f8fafc, #f8fafc), linear-gradient(120deg, #f472b6, #60a5fa, #34d399, #fbbf24, #f472b6);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  background-size: 100% 100%, 300% 300%;
-  animation: captureit-ai-generating-gradient 3s linear infinite;
-}
-@keyframes captureit-ai-generating-gradient { 0% { background-position: 0 0, 0% 50%; } 100% { background-position: 0 0, 100% 50%; } }
-.ai-pipeline-checklist { display: grid; gap: 4px; margin: 0; padding: 8px 11px; list-style: none; background: #fff; border-top: 1px solid #e2e8f0; }
-.ai-pipeline-step { display: flex; align-items: center; gap: 7px; color: #94a3b8; font-size: 11px; font-weight: 700; }
-.ai-pipeline-step-icon { display: inline-grid; width: 14px; height: 14px; place-items: center; border-radius: 999px; font-size: 9px; }
-.ai-pipeline-step-pending .ai-pipeline-step-icon { border: 1.5px solid #cbd5e1; }
-.ai-pipeline-step-active { color: #1d4ed8; }
-.ai-pipeline-step-active .ai-pipeline-step-icon { border: 1.5px solid #93c5fd; border-top-color: #1d4ed8; animation: captureit-ai-step-spin .8s linear infinite; }
-@keyframes captureit-ai-step-spin { to { transform: rotate(360deg); } }
-.ai-pipeline-step-done { color: #166534; }
-.ai-pipeline-step-done .ai-pipeline-step-icon { color: #fff; background: #16a34a; }
-.ai-pipeline-step-error { color: #b91c1c; }
-.ai-pipeline-step-error .ai-pipeline-step-icon { color: #fff; background: #dc2626; }
-.feature-title-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 9px; background: #fff; }
-.feature-index { color: #64748b; font-size: 12px; font-weight: 900; }
-.feature-title-input { min-width: 0; padding: 7px 8px; border-color: transparent; border-radius: 7px; background: #f8fafc; color: #172033; font-size: 12px; font-weight: 900; }
-.feature-title-input:focus { border-color: #2563eb; background: #fff; outline: none; box-shadow: 0 0 0 3px #dbeafe; }
-/* 판정 pill: 클릭할 때마다 PASS -> FAIL -> N/A로 순환하며 즉시 feature.result.status에 반영된다
-   (별도 확인 단계 없음). 색상으로 현재 판정을 구분한다. */
-.feature-status-pill { max-width: 74px; overflow: hidden; padding: 4px 9px; border: 0; border-radius: 999px; font-size: 10px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.feature-status-pill.verdict-pass { color: #166534; background: #dcfce7; }
-.feature-status-pill.verdict-fail { color: #991b1b; background: #fee2e2; }
-.feature-status-pill.verdict-na { color: #475569; background: #e8edf4; }
-.feature-status-pill:hover { filter: brightness(.96); }
-/* 테스트케이스명 행의 판정 pill 옆에 놓인 "선택된 증적 보기" 버튼: 클릭해야만 오버레이 드로어가 열린다
-   (카드 선택 자체로는 열리지 않음). */
-.feature-drawer-toggle { flex: 0 0 auto; }
-.feature-title-edit { width: calc(100% - 16px); margin: 8px; padding: 8px 10px; font-size: 12px; font-weight: 800; }
-.feature-controls { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #e2e8f0; }
-.feature-controls button { width: 100%; border-radius: 0; border-right: 1px solid #e2e8f0; }
-.feature-controls button:last-child { border-right: 0; }
-/* 설명 영역 전체(라벨+textarea)를 클릭하면 카드가 선택되어 결과 입력 영역이 펼쳐진다. */
-.feature-description-field { padding: 10px 11px; border-top: 1px solid #e2e8f0; background: #fff; cursor: pointer; }
-.feature-field-label { display: block; margin-bottom: 6px; color: #475569; font-size: 11px; font-weight: 800; }
-/* 필수 입력 항목(테스트케이스 설명)에만 붙는 마커. 기대 결과/실제 결과는 필수가 아니므로 생략한다. */
-.feature-field-label.required::after { content: ' *'; color: #dc2626; }
-.feature-description-edit { width: 100%; min-height: 52px; padding: 8px 9px; border: 1px solid #dbe2ec; border-radius: 7px; background: #fff; font-size: 12px; line-height: 1.45; resize: vertical; cursor: text; }
 
-/* 기대 결과/실제 결과는 카드가 선택됐을 때만 확장되어 보인다(귀찮은 유저가 불필요한
-   입력 필드를 계속 스크롤로 지나치지 않도록). max-height + opacity를 함께 트랜지션시켜
-   아래로 부드럽게 펼쳐지는(span) 애니메이션을 만든다. grid-template-rows 트랜지션은
-   브라우저에 따라 재생되지 않는 경우가 있어 max-height 방식을 사용한다. */
-.feature-result-fields { display: grid; gap: 10px; max-height: 0; padding: 0 11px; overflow: hidden; opacity: 0; background: #fff; border-top: 1px solid transparent; transition: max-height .28s ease, opacity .22s ease, padding .28s ease, border-color .28s ease; }
-.feature-item.selected .feature-result-fields { max-height: 260px; padding: 10px 11px; opacity: 1; border-top-color: #e2e8f0; transition: max-height .28s ease, opacity .22s ease .04s, padding .28s ease, border-color .28s ease; }
-.feature-result-fields label { color: #475569; font-size: 12px; font-weight: 700; }
+label { display: grid; gap: 4px; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+input, textarea, select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
+textarea { resize: vertical; }
+.input-locked { color: var(--ink-3); background: var(--line-2); cursor: not-allowed; }
+.hint { margin: 0; color: var(--ink-3); font-size: 12px; line-height: 1.55; }
+.eyebrow { color: var(--ink-3); font-size: 11px; font-weight: 600; }
 
-/* 선택된 증적 슬라이드 드로어: 카드를 선택하면 오른쪽에서 밀고 들어오는 독립 패널.
-   기본 상태는 화면 밖으로 밀려나 있고 .open일 때만 화면에 들어온다. */
-.feature-detail-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(15, 23, 42, .4); opacity: 0; transition: opacity .25s ease; }
-.feature-detail-backdrop.open { opacity: 1; }
-.feature-detail-drawer { position: fixed; top: 0; right: 0; z-index: 50; display: grid; gap: 14px; width: min(420px, 92vw); height: 100vh; margin: 0; padding: 22px; overflow-y: auto; border: 0; border-left: 1px solid #dbe2ec; border-radius: 0; background: #fff; box-shadow: -18px 0 40px rgba(15, 23, 42, .18); transform: translateX(100%); transition: transform .25s ease; }
-.feature-detail-drawer.open { transform: translateX(0); }
-/* AI 관련 버튼(증적 설명 생성/테스트케이스 설명 자동 생성)을 드로어 최상단에 나란히 배치한다 -
-   사용자가 매핑된 증적을 훑어보기 전에 먼저 AI 행동을 눈에 담을 수 있도록. */
-.feature-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.feature-ai-actions .button { flex: 1 1 auto; }
-.search { margin-bottom: 8px; }
-.inbox-panel.dragging { border-color: #2563eb; background: #eff6ff; box-shadow: inset 0 0 0 2px #bfdbfe; }
-.recent-evidence-panel { margin-bottom: 14px; padding: 12px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; }
-.recent-evidence-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 10px; }
-.recent-evidence-heading h3 { margin: 0; font-size: 14px; }
-.recent-evidence:empty::before { content: "아직 캡처된 증적이 없습니다."; color: #64748b; font-size: 12px; }
-.recent-evidence-card { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; padding: 10px; border: 1px solid #dbeafe; border-radius: 12px; text-align: left; color: #172033; background: #fff; cursor: pointer; overflow: hidden; }
-.recent-evidence-card img { width: 150px; aspect-ratio: 16 / 10; object-fit: contain; border-radius: 8px; background: #0f172a; }
-/* recent-evidence-card의 중간 컬럼(제목/메타)은 min-width:0이 필요하다 - 캡처된 페이지의 원본
-   스크립트/URL처럼 끊어질 공간이 없는 긴 문자열이 들어오면 그리드 아이템이 내용 크기만큼 강제로
-   넓어져 상위 레이아웃(.mapping-result-grid) 전체의 width가 깨지는 문제를 방지한다. */
-.recent-evidence-card > div { min-width: 0; overflow: hidden; }
-.recent-evidence-title { margin: 0 0 4px; overflow: hidden; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
-.recent-evidence-meta { margin: 0; overflow: hidden; color: #475569; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.evidence-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 12px; }
-#evidence-inbox { grid-template-columns: 1fr; }
-#evidence-inbox .capture-graph { width: 100%; }
-.evidence-grid:empty::before { content: "표시할 증적이 없습니다."; color: #94a3b8; font-size: 13px; }
-.evidence-card { overflow: hidden; border: 1px solid #dbe2ec; border-radius: 12px; background: #f8fafc; }
-.evidence-card > img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #0f172a; }
-/* 클릭하면 원본 크기로 확대해서 보여주는 상세 뷰어(Evidence_Detail_Dialog)가 열린다는 것을
-   드러내기 위한 힌트 - 확대 아이콘 커서. */
-.evidence-card-image { cursor: zoom-in; }
-.evidence-body { padding: 10px; }
-.evidence-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.evidence-title { margin: 0; font-size: 13px; font-weight: 800; }
-/* 증적을 기술 이벤트(triggerType)가 아니라 테스트 흐름 단계로 보여주기 위한 역할 뱃지
-   (iOS 원칙 5, D절 - "화면/입력/액션/결과/API/수동지정" 배지). */
-.evidence-role-badge, .capture-node-mapping-badge + .evidence-role-badge { display: inline-flex; flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 900; white-space: nowrap; }
-.evidence-role-badge.role-screen { color: #1d4ed8; background: #dbeafe; }
-.evidence-role-badge.role-input { color: #92400e; background: #fef3c7; }
-.evidence-role-badge.role-action { color: #166534; background: #dcfce7; }
-.evidence-role-badge.role-result { color: #6d28d9; background: #ede9fe; }
-.evidence-role-badge.role-manual { color: #475569; background: #e2e8f0; }
-.evidence-meta { min-height: 34px; margin: 5px 0 9px; color: #64748b; font-size: 11px; line-height: 1.45; }
-.evidence-description { padding: 7px 8px; font-size: 11px; }
-.evidence-controls { display: flex; gap: 5px; margin-top: 7px; }
-.evidence-controls button { flex: 1; padding: 6px; border: 0; border-radius: 6px; color: #334155; background: #e2e8f0; cursor: pointer; font-size: 10px; font-weight: 800; }
-.compact { grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); }
-.empty-feature { padding: 32px; border: 1px dashed #cbd5e1; border-radius: 12px; text-align: center; color: #64748b; }
-.llm-settings { margin-top: 24px; padding-top: 4px; border-top: 1px solid #e2e8f0; }
-.llm-settings h3 { margin-bottom: 2px; }
-.llm-settings > label { margin-top: 14px; }
-.llm-grid { margin-top: 14px; }
-.llm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.diagnostic-pre { display: none; max-height: 260px; margin: 12px 0 0; padding: 12px; overflow: auto; border: 1px solid #dbe2ec; border-radius: 10px; color: #0f172a; background: #f8fafc; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
-.diagnostic-pre.has-content { display: block; }
-.recommendations { display: grid; gap: 10px; margin-top: 14px; }
-.recommendations:empty::before { content: "추천 결과가 없습니다."; color: #94a3b8; font-size: 13px; }
-.recommendation { display: grid; grid-template-columns: 125px 1fr; gap: 10px; align-items: center; padding: 10px; border: 1px solid #dbe2ec; border-radius: 12px; background: #f8fafc; }
-.recommendation img { width: 125px; aspect-ratio: 16 / 10; object-fit: contain; border-radius: 8px; background: #0f172a; }
-.recommendation p { margin: 3px 0; }
-.recommendation-rank { font-size: 13px; font-weight: 900; }
-.recommendation-reason { color: #475569; font-size: 12px; line-height: 1.5; }
-.recommendation-controls { display: flex; grid-column: 1 / -1; gap: 6px; justify-content: flex-end; }
-.recommendation-controls .button { padding: 6px 9px; font-size: 11px; }
-.warning-box { margin-top: 22px; padding: 14px 16px; border: 1px solid #fde68a; border-radius: 12px; background: #fffbeb; }
-.warning-box h3 { margin: 0 0 8px; font-size: 14px; }
-.warning-box ul { margin: 0; padding-left: 20px; color: #854d0e; font-size: 12px; line-height: 1.6; }
-.warning-box ul:empty::before { content: "경고 없음"; color: #166534; }
-.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-/* mapping-result 단계 헤딩 우측에 배치되는 액션 버튼들은 panel-heading의 flex 정렬을 그대로 타므로
-   상단 마진이 필요 없다(제목과 나란히 놓여야 함). */
-.panel-heading .actions { flex-wrap: wrap; margin-top: 0; }
-.message { min-height: 20px; margin: 10px 0 0; color: #475569; font-size: 13px; }
-.message-error { color: #b91c1c; }
-.preview-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #dbe2ec; }
-.detail-toolbar-actions { display: flex; align-items: center; gap: 8px; }
-.detail-toolbar-actions .icon-button { width: 32px; height: 32px; font-size: 18px; }
-.evidence-detail-dialog { width: min(980px, 92vw); max-height: 92vh; padding: 0; border: 0; border-radius: 16px; box-shadow: 0 24px 80px rgba(15, 23, 42, .3); }
-.evidence-detail-dialog::backdrop { background: rgba(15, 23, 42, .6); }
-.evidence-detail-body { display: grid; grid-template-columns: minmax(320px, 1fr) 330px; gap: 16px; padding: 16px; overflow: auto; }
-.evidence-detail-body img { width: 100%; max-height: 72vh; object-fit: contain; border-radius: 12px; background: #0f172a; }
-.evidence-detail-body pre { max-height: 72vh; margin: 0; padding: 12px; overflow: auto; border: 1px solid #dbe2ec; border-radius: 12px; background: #f8fafc; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+/* ── 머리줄 ─────────────────────────────────────────── */
+.app-bar { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.app-mark { flex: none; }
+.report-name { display: inline-flex; min-width: 0; align-items: center; gap: 4px; padding: 4px 6px; border: 0; border-radius: 4px; background: transparent; font-size: 14px; font-weight: 700; cursor: pointer; }
+.report-name:hover { background: var(--line-2); }
+#report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-name-caret { color: var(--ink-3); font-size: 10px; }
+.save-status { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.more-menu-wrap { position: relative; }
+.more-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(20, 24, 30, .12); }
+.more-menu-item { padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; cursor: pointer; }
+.more-menu-item:hover { background: var(--line-2); }
 
-/* Settings_Entry_Point 다이얼로그: report-switch-dialog / storage-detail-dialog / llm-settings-dialog (Requirements 2.3, 2.4, 2.5, 5.3) */
-.report-switch-dialog { width: min(560px, 90vw); max-height: 90vh; padding: 0; border: 0; border-radius: 16px; overflow: auto; box-shadow: 0 24px 80px rgba(15, 23, 42, .3); }
-.report-switch-dialog::backdrop { background: rgba(15, 23, 42, .6); }
-.report-switch-dialog .report-toolbar { margin: 16px; }
+/* ── 수집 줄 ────────────────────────────────────────── */
+.capture-bar { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.capture-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.rec-dot { flex: none; width: 10px; height: 10px; overflow: hidden; border-radius: 50%; background: var(--line); text-indent: 20px; white-space: nowrap; }
+.rec-dot.is-on { background: var(--rec); animation: rec-pulse 1.6s ease-in-out infinite; }
+.rec-dot.is-starting { background: #e8a5a5; }
+@keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.capture-text { flex: 1 1 220px; min-width: 0; }
+.capture-title { font-size: 15px; font-weight: 700; }
+.capture-hint { margin: 2px 0 0; color: var(--ink-2); font-size: 12px; }
+.capture-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+#toggle-session.is-recording { color: var(--rec); border-color: #ecc5c5; background: var(--surface); }
+#toggle-session.is-recording:hover { background: var(--fail-soft); }
+.capture-meta { margin: 0; color: var(--ink-2); font-size: 12px; }
+.capture-meta strong { color: var(--ink); font-weight: 600; }
+.capture-target { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.paste-zone { display: grid; gap: 2px; padding: 8px 10px; border: 1px dashed #c4ccd6; border-radius: var(--radius); color: var(--ink-2); font-size: 12px; }
+.paste-zone strong { color: var(--ink); font-weight: 600; }
+.paste-zone-warning { border-color: #e2b45c; color: var(--warn-ink); background: var(--warn-soft); }
+.paste-zone-warning strong { color: var(--warn-ink); }
+body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: var(--accent); background: var(--accent-soft); }
+.capture-shortcut-hint { color: var(--ink-3); }
+.recent-evidence:empty { display: none; }
+.recent-evidence-card { display: flex; width: 100%; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
+.recent-evidence-card:hover { border-color: #c9d0d8; }
+.recent-evidence-card img { width: 72px; flex: none; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 3px; background: var(--line-2); }
+.recent-evidence-card > div { flex: 1; min-width: 0; }
+.recent-evidence-card > .icon-action-button { display: none; }
+.recent-evidence-title { margin: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.recent-evidence-meta { margin: 0; overflow: hidden; color: var(--ink-3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
-.storage-detail-dialog { width: min(640px, 90vw); max-height: 90vh; padding: 0; border: 0; border-radius: 16px; overflow: auto; box-shadow: 0 24px 80px rgba(15, 23, 42, .3); }
-.storage-detail-dialog::backdrop { background: rgba(15, 23, 42, .6); }
-.storage-detail-dialog .storage-list { margin: 16px 16px 0; }
-.storage-detail-dialog .storage-actions { margin: 14px 16px 0; }
-.storage-detail-dialog .hint { margin: 12px 16px 16px; }
+/* ── 작업대 ─────────────────────────────────────────── */
+.workspace { position: relative; flex: 1; display: grid; align-content: start; gap: 10px; padding: 12px; }
+.guidance { color: var(--ink-2); font-size: 12px; }
+.guidance ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.guidance li::before { content: "→ "; color: var(--ink-3); }
+.pane-switch { display: none; }
+.workspace-grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; gap: 12px; }
+.pane { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.pane-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.pane-heading h2 { font-size: 14px; font-weight: 700; }
+.pane-count { color: var(--ink-3); font-size: 12px; }
+.pane-heading .text-button { margin-left: auto; }
+.inbox-panel.dragging { border-color: var(--accent); background: var(--accent-soft); }
+.search { margin-bottom: 10px; }
+.empty-note { padding: 18px 12px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-3); font-size: 12px; text-align: center; }
+.evidence-list { display: grid; gap: 8px; }
+.evidence-list:empty::before { content: "아직 증적이 없습니다. 녹화를 시작하거나 스크린샷을 붙여넣으세요."; color: var(--ink-3); font-size: 12px; }
+.mapping-link-layer { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; overflow: visible; }
+.mapping-link-path { fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.mapping-link-path.active { stroke: var(--accent); }
+.mapping-link-path.inactive { stroke: #d3dbe6; stroke-dasharray: 4 4; }
+.mapping-link-dot { stroke: #fff; stroke-width: 1.5; }
+.mapping-link-dot.active { fill: var(--accent); }
+.mapping-link-dot.inactive { fill: #c7d1de; }
 
-.llm-settings-dialog { width: min(720px, 92vw); max-height: 90vh; padding: 0; border: 0; border-radius: 16px; overflow: auto; box-shadow: 0 24px 80px rgba(15, 23, 42, .3); }
-.llm-settings-dialog::backdrop { background: rgba(15, 23, 42, .6); }
-.llm-settings-dialog > .hint { margin: 16px 16px 0; }
-.llm-settings-dialog .llm-grid { margin: 14px 16px 0; }
-.llm-settings-dialog .llm-actions { margin: 10px 16px 0; }
-.llm-settings-dialog .diagnostic-pre { margin: 12px 16px 16px; }
-@media (max-width: 1050px) {
-  body { min-width: 0; }
-  .layout { grid-template-columns: 1fr; }
-  .report-panel { grid-column: 1; }
-  .mapping-result-grid { grid-template-columns: 1fr; }
-  .report-fields { grid-template-columns: 1fr 1fr; }
-  .report-fields .wide { grid-column: 1 / -1; }
-}
+/* ── 상태 줄 ────────────────────────────────────────── */
+.status-bar { position: sticky; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.message { flex: 1; min-width: 0; margin: 0; color: var(--ink-2); font-size: 12px; }
+.message-error { color: var(--fail); }
+.readiness { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.readiness .st-pass { color: var(--pass); }
+.readiness .st-fail { color: var(--fail); }
 
-/* Capture_Graph / Capture_Node / Node_Context_Preview (Requirements 2.6, 2.7, 2.8) */
-.capture-graph { position: relative; width: 100%; padding: 14px; border: 1px solid #dbe2ec; border-radius: 14px; background: #fff; box-shadow: 0 8px 20px rgba(15, 23, 42, .05); cursor: grab; }
-.capture-graph.mapped { box-shadow: 0 8px 20px rgba(37, 99, 235, .08); }
-/* 현재 선택된 테스트케이스와 직접 연관된 그래프(세션)만 진한 파란색 테두리로 강조. */
-.capture-graph.mapped.active { border-color: #2563eb; }
-.capture-graph.mapped.inactive { border-color: #bfdbfe; }
-.capture-graph.dragging, .capture-graph[draggable="true"]:active { opacity: .55; cursor: grabbing; }
-.capture-graph-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-/* flex 아이템 기본 min-width:auto로는 캡처된 페이지 제목/URL이 길 때 헤더가 강제로 넓어져
-   상위 레이아웃 width를 깨뜨릴 수 있으므로 min-width:0과 줄바꿈 처리를 명시한다. */
-.capture-graph-summary { min-width: 0; overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
-.capture-graph-title { margin: 0; overflow: hidden; color: #172033; font-size: 13px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-/* Feature_Group_Title: 세션 이름을 편집 가능한 입력란으로 렌더링한다 - feature-title-input과
-   동일한 조용한(투명 배경/보더) 스타일을 재사용해서 시각적 일관성을 유지한다. */
-.capture-graph-title-input { min-width: 0; flex: 1; padding: 7px 8px; border-color: transparent; border-radius: 7px; background: transparent; color: #172033; font-size: 13px; font-weight: 800; cursor: grab; }
-.capture-graph-title-input:focus { border-color: #2563eb; background: #fff; outline: none; box-shadow: 0 0 0 3px #dbeafe; cursor: text; }
-.capture-graph-count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; padding: 3px 8px; border-radius: 999px; color: #1d4ed8; background: #dbeafe; font-size: 11px; font-weight: 900; }
-/* Feature_Group_Actions: 헤더 우측의 매핑/연결해제/삭제/펼치기 아이콘들을 하나의 툴바로
-   정렬한다(capture-graph-header 자체의 flex 정렬에 얹혀 항상 헤더 오른쪽 끝에 붙는다). */
-.capture-graph-header-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.capture-graph-toggle { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: #1d4ed8; background: #dbeafe; cursor: pointer; font-size: 13px; font-weight: 900; }
-.capture-graph-toggle:hover { background: #bfdbfe; }
+/* ── 증적 세트(Capture_Graph)와 화면(Capture_Node) ─────────────── */
+.capture-graph { position: relative; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.capture-graph[draggable="true"] { cursor: grab; }
+.capture-graph.dragging, .capture-graph[draggable="true"]:active { opacity: .6; cursor: grabbing; }
+.capture-graph.mapped { border-left: 3px solid #c7d1de; }
+.capture-graph.mapped.active { border-left-color: var(--accent); }
+.capture-graph-header { display: flex; align-items: center; gap: 4px; }
+.capture-graph-title-input { min-width: 0; flex: 1; padding: 4px 6px; border-color: transparent; background: transparent; font-weight: 600; cursor: grab; }
+.capture-graph-title-input::placeholder { color: var(--ink); opacity: .85; }
+.capture-graph-title-input:focus { border-color: var(--accent); background: var(--surface); cursor: text; }
+.capture-graph-header-actions { display: flex; flex: none; align-items: center; gap: 0; margin-left: auto; }
+.capture-graph-toggle { display: inline-grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 4px; color: var(--ink-2); background: transparent; cursor: pointer; }
+.capture-graph-toggle:hover { background: var(--line-2); }
 .capture-graph-toggle svg { width: 16px; height: 16px; }
-.capture-graph-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-items: stretch; gap: 10px; }
-.capture-node { position: relative; display: flex; flex-direction: column; gap: 7px; overflow: visible; width: 100%; min-height: 142px; padding: 9px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fafc; cursor: grab; }
-.capture-node img { display: block; width: 100%; aspect-ratio: 16 / 10; height: auto; object-fit: contain; border-radius: 7px; background: #0f172a; cursor: zoom-in; }
+.capture-graph-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin-top: 6px; }
+.capture-node { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--surface); cursor: grab; }
+.capture-node:hover { border-color: var(--line); }
+.capture-node img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 3px; background: var(--line-2); cursor: zoom-in; }
 .capture-node:active { cursor: grabbing; }
-.capture-node + .capture-node::before,
-.capture-node + .capture-node::after { content: none; }
-.capture-node-meta-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.capture-node-meta { margin: 0; overflow: hidden; color: #172033; font-size: 12px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
-/* 현재 선택된 테스트케이스와 직접 연관된 노드만 진한 파란색으로, 나머지 매핑된 노드는
-   옅은 파란색으로 표시한다(요청: "직접적으로 연관 있는 노드만 진한 파란색"). */
-.capture-node.mapped.active { border-color: #2563eb; background: #eff6ff; box-shadow: inset 0 0 0 1px #bfdbfe; }
-.capture-node.mapped.inactive { border-color: #bfdbfe; background: #f5f9ff; box-shadow: inset 0 0 0 1px #dbeafe; }
-.capture-node-mapping-badge { display: inline-flex; min-width: 0; padding: 4px 7px; border-radius: 999px; color: #1d4ed8; background: #dbeafe; font-size: 10px; font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capture-node.mapped.active { border-color: #b8c9ef; background: var(--accent-soft); }
+.capture-node-meta-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.capture-node-meta { flex: 1; min-width: 0; margin: 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.capture-node-mapping-badge { overflow: hidden; color: var(--accent-ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.capture-node-mapping-badge::before { content: "→ "; }
+.capture-node-footer { display: flex; align-items: center; gap: 0; margin-top: auto; }
+.capture-node-footer .map-to-feature-button { margin-right: auto; }
+.capture-node-preview { position: fixed; z-index: 1000; width: max-content; max-width: 260px; padding: 8px 10px; border-radius: 4px; color: #e8eaed; background: #23272d; font-size: 11px; line-height: 1.5; pointer-events: none; }
+.capture-node-preview-target { margin: 0 0 2px; overflow-wrap: anywhere; font-weight: 600; }
+.capture-node-preview-context { margin: 0; overflow-wrap: anywhere; color: #b9bfc7; }
+.capture-graph.keyboard-selected, .capture-node.keyboard-selected { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Node_Context_Preview tooltip */
-.capture-node-preview { position: fixed; z-index: 1000; box-sizing: border-box; width: max-content; max-width: 280px; padding: 10px 12px; border-radius: 10px; color: #e2e8f0; background: #0f172a; box-shadow: 0 12px 30px rgba(15, 23, 42, .3); font-size: 11px; line-height: 1.5; pointer-events: none; }
-.capture-node-preview[hidden] { display: none !important; }
-.capture-node-preview-target { margin: 0 0 4px; overflow-wrap: anywhere; color: #93c5fd; font-weight: 800; }
-.capture-node-preview-context { margin: 0; overflow-wrap: anywhere; color: #cbd5e1; }
+/* 역할 표시는 색 칩 대신 작은 글자로 둔다. 결과 메시지가 있는 화면만 강조한다. */
+.evidence-role-badge { flex: none; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.evidence-role-badge.role-result { color: var(--accent-ink); font-weight: 600; }
+.evidence-role-badge.role-manual { color: var(--ink-2); }
+.evidence-merged-badge { flex: none; color: var(--ink-3); font-size: 11px; cursor: help; }
+.map-to-feature-button { border: 0; color: var(--ink-2); background: transparent; }
+.map-to-feature-button:hover { color: var(--accent); background: var(--accent-soft); }
 
-/* Drag_And_Drop_Mapping 드롭 타겟 (Feature_Spec의 Test_Result_Set 영역, 요구사항 3.1) */
-.feature-drop-target.dragover { border-color: #2563eb; background: #eff6ff; box-shadow: inset 0 0 0 2px #bfdbfe; }
+/* 드로어 안의 연결된 증적 카드 */
+.evidence-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.evidence-grid:empty::before { content: "연결된 증적이 없습니다."; color: var(--ink-3); font-size: 12px; }
+.evidence-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.evidence-card > img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; background: var(--line-2); }
+.evidence-card-image { cursor: zoom-in; }
+.evidence-body { display: grid; gap: 6px; padding: 8px; }
+.evidence-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.evidence-title { margin: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-meta { margin: 0; color: var(--ink-3); font-size: 11px; }
+.evidence-description { font-size: 12px; }
+.evidence-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+.evidence-controls button { padding: 3px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-size: 11px; cursor: pointer; }
+.evidence-controls button:hover:not(:disabled) { background: var(--line-2); }
+.feature-drop-target.dragover { outline: 2px dashed var(--accent); outline-offset: 2px; }
 
-/* Alternative_Mapping_Control: capture-graph/capture-node 카드 내부에 배치되는 "이 기능에 매핑" 버튼 (요구사항 3.5) */
-.map-to-feature-button { padding: 7px; border-radius: 7px; font-size: 11px; font-weight: 800; }
-/* capture-graph-header-actions 컨테이너 자체가 margin-left:auto로 헤더 오른쪽에 붙으므로,
-   그 안의 첫 액션(map-to-feature-button)에는 더 이상 개별 margin-left:auto가 필요 없다. */
-.capture-node-footer { display: flex; gap: 6px; margin-top: auto; }
-.capture-node-footer .map-to-feature-button { flex: 1; padding: 6px 8px; font-size: 10px; }
-.capture-node-footer .icon-only { flex: 0 0 auto; width: 30px; height: 30px; }
+/* ── 테스트케이스 ───────────────────────────────────── */
+.feature-list { display: grid; gap: 8px; }
+.feature-item { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.feature-item.selected { border-color: #b8c9ef; box-shadow: inset 3px 0 0 var(--accent); }
+.feature-list.picking .feature-item { cursor: copy; border-style: dashed; border-color: var(--accent); }
+.feature-item.drop-hover { border-color: var(--accent); background: var(--accent-soft); }
+.feature-item.ai-generating { box-shadow: inset 3px 0 0 #8aa8e8; }
+.feature-title-row { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; cursor: pointer; }
+.feature-index { flex: none; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.feature-title-input { flex: 1; min-width: 0; padding: 4px 6px; border-color: transparent; background: transparent; font-size: 13px; font-weight: 600; }
+.feature-title-input:hover { border-color: var(--line-2); }
+.feature-evidence-count { flex: none; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.feature-target-mark { flex: none; color: var(--rec); font-size: 11px; font-weight: 600; white-space: nowrap; }
+/* 판정 표기: 칩 대신 기호와 글자 */
+.st { flex: none; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.st-pass { color: var(--pass); }
+.st-fail { color: var(--fail); }
+.st-none { color: var(--ink-3); font-weight: 600; }
+.ai-opinion-hint { margin: 0 10px 6px; color: var(--ink-2); font-size: 12px; }
+.ai-pipeline-checklist { display: grid; gap: 2px; margin: 0; padding: 4px 10px 6px; list-style: none; }
+.ai-pipeline-step { display: flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 11px; }
+.ai-pipeline-step-icon { display: inline-grid; width: 12px; height: 12px; place-items: center; border-radius: 50%; font-size: 9px; }
+.ai-pipeline-step-pending .ai-pipeline-step-icon { border: 1.5px solid var(--line); }
+.ai-pipeline-step-active { color: var(--accent-ink); }
+.ai-pipeline-step-active .ai-pipeline-step-icon { border: 1.5px solid #b8c9ef; border-top-color: var(--accent); animation: step-spin .8s linear infinite; }
+@keyframes step-spin { to { transform: rotate(360deg); } }
+.ai-pipeline-step-done { color: var(--pass); }
+.ai-pipeline-step-done .ai-pipeline-step-icon { color: #fff; background: var(--pass); }
+.ai-pipeline-step-error { color: var(--fail); }
+.ai-pipeline-step-error .ai-pipeline-step-icon { color: #fff; background: var(--fail); }
+.feature-description-field { padding: 0 10px 8px; }
+.feature-field-label { display: block; margin-bottom: 3px; color: var(--ink-3); font-size: 11px; font-weight: 600; }
+.feature-field-label.required::after { content: " *"; color: var(--fail); }
+.feature-description-edit { min-height: 44px; font-size: 12px; }
+.feature-result-fields { display: grid; gap: 8px; padding: 0 10px 8px; }
+.feature-item:not(.selected) .feature-result-fields { display: none; }
+.feature-result-fields label { font-size: 11px; color: var(--ink-3); }
+.feature-result-fields textarea { font-size: 12px; }
+.feature-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; border-top: 1px solid var(--line-2); }
+.verdict { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); }
+.verdict-option { padding: 3px 9px; border: 0; border-right: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 12px; font-weight: 600; cursor: pointer; }
+.verdict-option:last-child { border-right: 0; }
+.verdict-option:hover { background: var(--line-2); }
+.verdict-option[aria-pressed="true"].verdict-pass { color: var(--pass); background: var(--pass-soft); }
+.verdict-option[aria-pressed="true"].verdict-fail { color: var(--fail); background: var(--fail-soft); }
+.verdict-option[aria-pressed="true"].verdict-na { color: var(--ink); background: var(--line-2); }
+.feature-controls { display: flex; margin-left: auto; }
+.feature-controls .icon-only.is-active { color: var(--rec); }
 
-/* 키보드 기반 Alternative_Mapping_Control의 포커스/선택 상태 (요구사항 3.5) */
-.capture-graph.keyboard-selected, .capture-node.keyboard-selected { outline: 2px solid #2563eb; outline-offset: 2px; box-shadow: 0 0 0 4px #dbeafe; }
-.capture-graph:focus-visible, .capture-node:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+/* 선택된 테스트케이스의 연결 증적 드로어 */
+.feature-detail-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(20, 24, 30, .3); opacity: 0; transition: opacity .2s ease; }
+.feature-detail-backdrop.open { opacity: 1; }
+.feature-detail-drawer { position: fixed; top: 0; right: 0; z-index: 50; display: grid; align-content: start; gap: 12px; width: min(440px, 100vw); height: 100vh; margin: 0; padding: 14px; overflow-y: auto; border-left: 1px solid var(--line); background: var(--surface); transform: translateX(100%); transition: transform .2s ease; }
+.feature-detail-drawer.open { transform: translateX(0); }
+.drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.drawer-heading h2 { font-size: 15px; }
+.feature-ai-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.recommendations { display: grid; gap: 8px; }
+.recommendations:empty { display: none; }
+.recommendation { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); }
+.recommendation img { width: 96px; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 3px; background: var(--line-2); }
+.recommendation p { margin: 2px 0; }
+.recommendation-rank { font-weight: 600; }
+.recommendation-reason { color: var(--ink-2); font-size: 12px; }
+.recommendation-controls { display: flex; grid-column: 1 / -1; gap: 4px; justify-content: flex-end; }
+.recommendation-controls .button { min-height: 26px; padding: 2px 8px; font-size: 11px; }
 
-/* 1단계 개선: 단계와 무관하게 보이는 안내 메시지, 붙여넣기 영역, 중복 합침 표시 */
-#editor-message { max-width: 1380px; margin: 10px auto 0; padding: 0 24px; box-sizing: border-box; }
-#editor-message:empty { display: none; }
-.paste-zone { display: grid; gap: 4px; width: min(100%, 560px); margin-top: 8px; padding: 14px 18px; border: 2px dashed #93c5fd; border-radius: 14px; color: #1e3a8a; font-size: 13px; line-height: 1.5; background: #f8fbff; }
-.paste-zone span { color: #475569; font-size: 12px; }
-.paste-zone-warning { border-color: #f59e0b; color: #92400e; background: #fffbeb; }
-body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: #2563eb; background: #eff6ff; }
-.evidence-merged-badge { display: inline-flex; flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; color: #475569; font-size: 10px; font-weight: 900; background: #f1f5f9; cursor: help; }
-.ai-opinion-hint { margin: 6px 0 0; color: #6d28d9; font-size: 12px; font-weight: 700; }
-#clean-duplicates { flex: 0 0 auto; }
+/* ── 대화상자 ───────────────────────────────────────── */
+.sheet { width: min(640px, 94vw); max-height: 90vh; padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--surface); box-shadow: 0 16px 48px rgba(20, 24, 30, .2); }
+.sheet::backdrop { background: rgba(20, 24, 30, .35); }
+.sheet-heading { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.sheet-heading h2 { font-size: 15px; }
+.sheet-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+.sheet-note { padding: 10px 14px 0; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; padding: 12px 14px 0; }
+.wide { grid-column: 1 / -1; }
+.report-toolbar { display: grid; gap: 4px; padding: 12px 14px 0; }
+.report-toolbar .sheet-actions { padding: 8px 0 14px; }
+.storage-list { display: grid; gap: 0; margin: 0; padding: 6px 14px 0; }
+.storage-list div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-2); }
+.storage-list dt { color: var(--ink-3); font-size: 12px; }
+.storage-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 12px; }
+.storage-detail-dialog .sheet-note { padding-bottom: 14px; }
+.diagnostic-pre { display: none; max-height: 240px; margin: 0 14px 14px; padding: 10px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+.diagnostic-pre.has-content { display: block; }
+.evidence-detail-dialog { width: min(1040px, 96vw); }
+.detail-toolbar-actions { display: flex; align-items: center; gap: 2px; }
+.evidence-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; padding: 12px; }
+.evidence-detail-body img { width: 100%; max-height: 74vh; object-fit: contain; border: 1px solid var(--line-2); background: var(--bg); }
+.evidence-detail-body pre { max-height: 74vh; margin: 0; padding: 10px; overflow: auto; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg); font: 12px/1.6 inherit; white-space: pre-wrap; }
+
+/* 내보내기 */
+.export-dialog { width: min(760px, 96vw); }
+.export-body { display: grid; gap: 16px; padding: 14px; }
+.export-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; margin: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+.export-summary div { padding: 8px 10px; border-right: 1px solid var(--line-2); }
+.export-summary div:last-child { border-right: 0; }
+.export-summary dt { color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.export-summary dd { margin: 0; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.export-check h3, .template-picker legend { margin-bottom: 6px; font-size: 13px; font-weight: 700; }
+.export-check ul { display: grid; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
+.export-check ul:empty::before { content: "✓ 빠진 것이 없습니다."; color: var(--pass); }
+.export-check li button { width: 100%; padding: 5px 8px; border: 0; border-radius: 4px; color: var(--warn-ink); background: var(--warn-soft); text-align: left; cursor: pointer; }
+.export-check li button:hover { text-decoration: underline; }
+.export-body { padding-bottom: 0; }
+/* 만들기 버튼은 양식 목록을 내려 보지 않아도 늘 보이게 창 아래에 붙인다. */
+.export-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 -14px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--surface); }
 
 /* 문서 양식 선택: 양식마다 축소 지면을 그려 모양을 보여준다 */
-.template-picker { width: min(100%, 860px); margin: 18px 0 4px; padding: 0; border: 0; text-align: left; }
-.template-picker legend { padding: 0; font-size: 15px; font-weight: 800; }
-.template-picker .hint { margin: 4px 0 10px; }
-.template-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
-.template-option { position: relative; display: grid; gap: 4px; padding: 10px; border: 1px solid #dbe2ec; border-radius: 10px; background: #fff; cursor: pointer; }
-.template-option:has(input:checked) { border-color: #1d4ed8; box-shadow: inset 0 0 0 1px #1d4ed8; }
-.template-option:has(input:focus-visible) { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+.template-picker { margin: 0; padding: 0; border: 0; }
+.template-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.template-option { position: relative; display: grid; align-content: start; gap: 2px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.template-option:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.template-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .template-option input { position: absolute; opacity: 0; pointer-events: none; }
-.template-option-name { font-size: 13px; font-weight: 800; }
-.template-option:has(input:checked) .template-option-name::before { content: "✓ "; color: #1d4ed8; }
-.template-option-description { color: #64748b; font-size: 11px; line-height: 1.45; }
+.template-option-name { color: var(--ink); font-size: 12px; font-weight: 700; }
+.template-option:has(input:checked) .template-option-name::before { content: "✓ "; color: var(--accent); }
+.template-option-description { color: var(--ink-3); font-size: 11px; font-weight: 400; line-height: 1.4; }
 .tpl-thumb { display: flex; flex-direction: column; gap: 4px; aspect-ratio: 3 / 4; margin-bottom: 4px; padding: 10px 9px; border: 1px solid #e2e0da; background: #fff; overflow: hidden; }
 .tpl-thumb i { display: block; flex: 0 0 auto; height: 3px; background: #c9c5bb; }
 .tpl-thumb .tpl-title { width: 70%; height: 7px; background: #1b1b1b; }
@@ -398,4 +332,32 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .tpl-thumb-mono i { background: #000; }
 .tpl-thumb-mono .tpl-line { background: #9e9e9e; }
 .tpl-thumb-mono .tpl-figure { background: repeating-linear-gradient(45deg, #fff 0 3px, #d0d0d0 3px 4px); border-color: #000; }
-@media (max-width: 900px) { .template-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ── 좁은 폭(사이드 패널) ───────────────────────────── */
+@media (max-width: 759px) {
+  .workspace { padding: 10px; }
+  .pane-switch { display: flex; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .pane-switch-button { flex: 1; padding: 6px; border: 0; background: transparent; color: var(--ink-2); font-weight: 600; cursor: pointer; }
+  .pane-switch-button + .pane-switch-button { border-left: 1px solid var(--line); }
+  .pane-switch-button[aria-pressed="true"] { color: var(--ink); background: var(--line-2); box-shadow: inset 0 -2px 0 var(--accent); }
+  .pane-switch-button span { color: var(--ink-3); font-weight: 400; }
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); }
+  .workspace[data-pane="inbox"] .feature-panel, .workspace[data-pane="features"] .inbox-panel { display: none; }
+  .pane { padding: 0; border: 0; background: transparent; }
+  .pane-heading { margin-bottom: 6px; }
+  .pane-heading h2, .pane-heading .pane-count { display: none; }
+  .mapping-link-layer { display: none; }
+  .capture-graph-nodes { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  .capture-shortcut-hint { display: none; }
+  .paste-zone:not(.paste-zone-warning) #paste-zone-hint { display: none; }
+  .export-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .export-summary div:nth-child(3) { border-right: 0; }
+  .export-summary div:nth-child(-n+3) { border-bottom: 1px solid var(--line-2); }
+  .evidence-detail-body { grid-template-columns: minmax(0, 1fr); }
+  .readiness { display: none; }
+  .tpl-thumb { display: none; }
+  .template-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

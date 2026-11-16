@@ -35,52 +35,33 @@ function extractFunctionBody(text, functionName) {
 const renderGuidanceBody = extractFunctionBody(source, 'renderGuidance');
 const renderFeatureBody = extractFunctionBody(source, 'renderFeature');
 
-// Task 18.2 - 8.6/8.1: 캡처 세션 활성 여부에 따른 안내 문구
-// _Requirements: 8.1, 8.6_
-test('renderGuidance는 session.active 여부에 따라 서로 다른 안내 문구를 if/else로 push한다', () => {
-  // 안내는 단계(activeStageIndex)와 녹화 여부에 따라 고른다.
+test('renderGuidance는 녹화 중이면 녹화 안내를, 아니고 증적이 없으면 시작 안내를 push한다', () => {
+  // 단계가 없으므로 녹화 상태와 작업 상태만 보고 고른다.
   assert.match(renderGuidanceBody, /const recording = Boolean\(session && session\.active\);/);
   const ifElseMatch = renderGuidanceBody.match(
     /if \(recording\) (messages\.push\('[^']*'\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
   );
   assert.ok(ifElseMatch, '녹화 중/아님에 따라 다른 안내를 push해야 한다');
-
-  assert.match(
-    ifElseMatch[1],
-    /messages\.push\('녹화 중입니다\./,
-    '세션이 활성 상태면 "캡처 세션이 진행 중입니다." 문구를 push해야 한다',
-  );
-  assert.match(
-    ifElseMatch[2],
-    /messages\.push\('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요\(Ctrl\+V\)\.'\)/,
-    '세션이 비활성 상태면 "캡처를 시작하거나 이미지를 불러오세요." 문구를 push해야 한다',
-  );
+  assert.match(ifElseMatch[1], /messages\.push\('테스트 화면을 평소처럼 조작하세요\./);
+  assert.match(ifElseMatch[2], /messages\.push\('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요\(Ctrl\+V\)\.'\)/);
+  assert.doesNotMatch(renderGuidanceBody, /activeStageIndex|단계/, '안내가 단계 번호에 기대지 않는다');
 });
 
-// Task 18.2 - 8.5: Feature_Spec이 하나도 없을 때 안내
-// _Requirements: 8.5_
-test('renderGuidance는 editorState.features.length === 0일 때 기능 명세 추가 안내를 push한다', () => {
+test('renderGuidance는 테스트케이스가 없으면 연결 버튼으로 바로 만들 수 있다고 안내한다', () => {
   assert.match(renderGuidanceBody, /const featureCount = editorState\.features\.length;/);
   assert.match(
     renderGuidanceBody,
-    /else if \(featureCount === 0\) messages\.push\('증적 세트의 🔗 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다\./,
-    '테스트케이스가 없으면 🔗 버튼으로 바로 만들어 연결할 수 있다고 안내해야 한다',
+    /else if \(featureCount === 0\) messages\.push\('증적 세트의 연결 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다\.'\)/,
   );
 });
 
-// Task 18.2 - 8.4: Draft_Report 상태일 때 저장 선택사항 안내
-// _Requirements: 8.4_
-test('renderGuidance는 report && report.isDraft일 때 저장 선택사항 안내를 push한다', () => {
-  const match = renderGuidanceBody.match(
-    /if\s*\(\s*report\s*&&\s*report\.isDraft\s*\)\s*{([\s\S]*?)}/,
-  );
-  assert.ok(match, 'report && report.isDraft 조건 블록이 있어야 한다');
-  assert.match(
-    match[1],
-    /messages\.push\('저장은 선택사항입니다/,
-    'Draft_Report 상태면 "저장은 선택사항입니다"로 시작하는 문구를 push해야 한다',
-  );
+test('renderGuidance는 연결 → 판정 → 내보내기 순서로 남은 일을 안내한다', () => {
+  const order = ['unmappedFeatures > 0', 'unjudged > 0', '모두 판정했습니다. 내보내기를 누르세요.'];
+  const positions = order.map((text) => renderGuidanceBody.indexOf(text));
+  assert.ok(positions.every((position) => position > 0), JSON.stringify(positions));
+  assert.ok(positions[0] < positions[1] && positions[1] < positions[2]);
 });
+
 
 // Task 18.2 - 8.7: Report_Draft_Suggestion 다이얼로그가 열려 있을 때 승인/수정 안내
 // _Requirements: 8.7_
@@ -91,7 +72,7 @@ test('renderGuidance는 reportDraftSuggestionDialog.open일 때 승인/수정 �
   assert.ok(match, 'elements.reportDraftSuggestionDialog.open 조건 블록이 있어야 한다');
   assert.match(
     match[1],
-    /messages\.push\('제안된 보고서명과 형상·체크아웃 개요는 승인 또는 수정 후 저장됩니다\.'\)/,
+    /messages\.push\('제안된 보고서명과 형상·체크아웃 개요는 반영을 눌러야 저장됩니다\.'\)/,
     'Report_Draft_Suggestion 다이얼로그가 열려 있으면 승인/수정 안내 문구를 push해야 한다',
   );
 });
@@ -131,7 +112,7 @@ test('renderFeature는 evidenceIds 매핑 여부에 따라 서로 다른 feature
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 연결 버튼을 누르세요\.'/,
     '매핑된 증적이 없으면 매핑 유도 문구를 textContent에 설정해야 한다',
   );
   assert.match(
