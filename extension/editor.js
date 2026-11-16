@@ -103,6 +103,8 @@
     recordTarget: byId('record-target'),
     captureTarget: byId('capture-target'),
     linkTarget: byId('link-target'),
+    purposeStart: byId('purpose-start'),
+    purposeOptions: byId('purpose-options'),
     stopRecordingBar: byId('stop-recording-bar'),
     statusBar: document.querySelector('.status-bar'),
     captureSettingsDialog: byId('capture-settings-dialog'),
@@ -243,11 +245,6 @@
   let preferredTemplate = null;
 
   const roleLabel = { before: '수행 전', action: '수행 시점', after: '수행 후' };
-  // 캡처 모드는 항상 'event'다. 녹화 전/중 안내문.
-  const captureHintText = {
-    idle: '테스트를 평소처럼 진행하면 화면과 맥락이 자동으로 저장됩니다.',
-    recording: '테스트 화면을 평소처럼 조작하세요. 끝나면 녹화 종료를 누르세요.',
-  };
 
   const PREVIEW_STORAGE_KEY = 'captureit-preview-storage';
 
@@ -299,11 +296,10 @@
     return editorState.features.find((feature) => feature.id === currentFeatureId) || null;
   }
 
-  function createInitialReport(title = `새 ${docType().name}`) {
-    const created = CaptureITDomain.createReport(title);
-    created.documentType = docType().id;
-    created.features.push(CaptureITDomain.createFeature(`새 ${itemWord()}`));
-    return created;
+  // 새 보고서는 목적(문서 유형)을 아직 고르지 않은 빈 보고서다. 작업대가 "무엇을 만들까요?"를 먼저 보여 준다.
+  // 예전에는 QA로 정해진 채 "새 테스트케이스"가 하나 들어 있었다.
+  function createInitialReport() {
+    return CaptureITDomain.createReport(docType().defaultTitle);
   }
 
   // action: { label, run } — 끝난 일 바로 다음에 할 만한 행동(예: 저장한 ZIP을 폴더에서 보기)을 같은 줄에 붙인다.
@@ -348,7 +344,9 @@
       return option;
     });
     elements.reportSelect.replaceChildren(...options);
-    elements.reportName.textContent = report && report.title || '새 QA 보고서';
+    // 목적을 고르기 전 빈 보고서는 QA 이름 대신 '새 문서'로 부른다.
+    const untitledNew = needsPurpose() && (!report || CaptureITDocumentTypes.isDefaultTitle(report.title));
+    elements.reportName.textContent = untitledNew ? '새 문서' : report && report.title || docType().defaultTitle;
   }
 
   function renderReportFields() {
@@ -387,8 +385,12 @@
     const starting = sessionButtonState === 'STARTING';
     elements.sessionStatus.textContent = active ? '녹화 중' : starting ? '녹화 시작 중' : '녹화 안 함';
     elements.sessionStatus.className = `rec-dot ${active ? 'is-on' : starting ? 'is-starting' : ''}`.trim();
-    elements.captureFirstHeading.textContent = active ? '녹화 중' : starting ? '녹화를 시작하고 있습니다…' : '테스트 화면을 녹화하세요';
-    elements.captureModeHint.textContent = active ? captureHintText.recording : captureHintText.idle;
+    // 목적을 고르기 전에는 어느 쪽에도 치우치지 않은 문구를 쓴다.
+    const capture = needsPurpose()
+      ? { title: '화면을 녹화하세요', idle: '화면을 평소처럼 조작하면 화면과 맥락이 자동으로 저장됩니다.', recording: '화면을 평소처럼 조작하세요. 끝나면 녹화 종료를 누르세요.' }
+      : docType().capture;
+    elements.captureFirstHeading.textContent = active ? '녹화 중' : starting ? '녹화를 시작하고 있습니다…' : capture.title;
+    elements.captureModeHint.textContent = active ? capture.recording : capture.idle;
     elements.toggleSession.replaceChildren();
     if (active) elements.toggleSession.append(Object.assign(document.createElement('span'), { className: 'stop-glyph' }));
     elements.toggleSession.append(starting ? '시작 중…' : active ? '녹화 종료' : '녹화 시작');
@@ -826,8 +828,8 @@
     const image = document.createElement('img');
     image.src = evidence.docImageDataUrl || evidence.imageDataUrl;
     image.alt = evidence.context && evidence.context.target
-      ? evidence.context.target.visibleText || 'QA 증적'
-      : 'QA 증적';
+      ? evidence.context.target.visibleText || '증적 화면'
+      : '증적 화면';
     image.classList.add('evidence-card-image');
     // 이미지를 클릭하면 원본 크기 이미지를 확대해서 보여주는 기존 상세 뷰어(Evidence_Detail_Dialog)를
     // 재사용한다(captureNode/renderRecentEvidence와 동일한 진입점).
@@ -1120,8 +1122,8 @@
     const image = document.createElement('img');
     image.src = evidence.docImageDataUrl || evidence.imageDataUrl;
     image.alt = evidence.context && evidence.context.target
-      ? evidence.context.target.visibleText || 'QA 증적'
-      : 'QA 증적';
+      ? evidence.context.target.visibleText || '증적 화면'
+      : '증적 화면';
     swapToCroppedThumbnailWhenReady(evidence, image);
     image.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1583,8 +1585,9 @@
     return { features: features.length, pass, fail, na, evidence: mappedEvidenceIds.size, total: evidenceList.length };
   }
 
+  // 직접 고른 양식이 있으면 그것, 없으면 문서 유형의 기본 양식(설명서는 그림 중심, 결과서는 공문서 등).
   function currentTemplateId() {
-    return report && report.documentTemplate || preferredTemplate || CaptureITReport.DEFAULT_TEMPLATE;
+    return report && report.documentTemplate || docType().defaultTemplate || preferredTemplate || CaptureITReport.DEFAULT_TEMPLATE;
   }
 
   // 완료 단계의 양식 선택. 양식마다 축소 지면(.tpl-thumb)을 그려 모양을 미리 보여준다.
@@ -1696,7 +1699,7 @@
     const verdict = docType().verdict;
     const unjudged = verdict ? editorState.features.filter((feature) => !feature.result.status).length : 0;
     const recording = Boolean(session && session.active);
-    if (recording) messages.push('테스트 화면을 평소처럼 조작하세요. 주요 화면이 자동으로 수집됩니다.');
+    if (recording) messages.push(docType().capture.recording);
     else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
     else if (featureCount === 0) messages.push(`증적 세트의 연결 버튼을 누르면 ${itemWord('이/가')} 만들어지며 연결됩니다.`);
     else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. ${itemWord('을/를')} 고른 뒤 증적의 연결 버튼을 누르세요.`);
@@ -1764,6 +1767,10 @@
   // 작업대 공통 상태(안내, 준비 상태, 내보내기 요약, 연결선)를 다시 그린다.
   // 증적·테스트케이스·녹화 상태를 바꾸는 동작은 끝에 이 함수를 부른다.
   function renderWorkspace() {
+    // 증적이 생기거나 테스트케이스를 만들면 "무엇을 만들까요?"는 물러난다(녹화·붙여넣기로 바로 시작한 경우).
+    renderPurposeStart();
+    elements.reportType.textContent = needsPurpose() ? '목적 고르기' : docType().name;
+    renderReportSelector();
     renderGuidance();
     renderReadiness();
     renderCompletionSummary();
@@ -1853,7 +1860,7 @@
     const canUsePanel = Boolean(chrome.sidePanel && typeof chrome.sidePanel.open === 'function');
     elements.toggleView.hidden = hostTab ? !canUsePanel : false;
     elements.toggleView.textContent = hostTab ? '옆에 두기' : '넓게 보기';
-    elements.toggleView.title = hostTab ? '테스트 화면 옆 사이드 패널로 옮깁니다' : '같은 작업을 탭으로 크게 엽니다';
+    elements.toggleView.title = hostTab ? '업무 화면 옆 사이드 패널로 옮깁니다' : '같은 작업을 탭으로 크게 엽니다';
     if (!hostTab && chrome.tabs.onActivated) {
       // 패널에서는 지금 보이는 탭이 녹화 대상이므로 탭을 바꾸면 안내를 갱신한다.
       chrome.tabs.onActivated.addListener(() => renderRecordTarget().catch(() => {}));
@@ -1866,7 +1873,9 @@
   // 문서 유형에 따라 바뀌는 화면 이름들.
   function renderTerms() {
     const type = docType();
-    elements.reportType.textContent = type.name;
+    elements.exportReport.textContent = type.exportLabel;
+    renderPurposeStart();
+    elements.reportType.textContent = needsPurpose() ? '목적 고르기' : type.name;
     elements.featureListHeading.textContent = type.item;
     elements.paneLabelFeatures.textContent = type.item;
     elements.addFeature.setAttribute('aria-label', `${type.item} 추가`);
@@ -1902,14 +1911,49 @@
     }));
   }
 
+  // 아직 목적을 고르지 않은 빈 보고서면 작업대 대신 "무엇을 만들까요?"를 보여 준다.
+  // 목적을 고르지 않고 바로 녹화하거나 붙여넣어도 된다(그때는 지난번 유형, 처음이면 QA로 본다).
+  function needsPurpose() {
+    if (editorState.evidence.length > 0 || editorState.features.length > 0) return false;
+    return !report || !report.documentType;
+  }
+
+  function renderPurposeStart() {
+    const choosing = needsPurpose();
+    elements.purposeStart.hidden = !choosing;
+    elements.workspace.classList.toggle('choosing', choosing);
+    if (!choosing || elements.purposeOptions.childElementCount) return;
+    elements.purposeOptions.replaceChildren(...CaptureITDocumentTypes.DOCUMENT_TYPES.map((type) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'purpose-option';
+      button.dataset.type = type.id;
+      const terms = type.verdict ? `${type.item} · ${type.verdict.PASS}/${type.verdict.FAIL}/${type.verdict.none}` : `${type.item} · 판정 없음`;
+      button.append(
+        Object.assign(document.createElement('strong'), { textContent: type.name }),
+        Object.assign(document.createElement('span'), { className: 'purpose-when', textContent: type.when }),
+        Object.assign(document.createElement('span'), { className: 'purpose-output', textContent: type.output }),
+        Object.assign(document.createElement('span'), { className: 'purpose-terms', textContent: terms }),
+      );
+      button.addEventListener('click', () => setDocumentType(type.id).catch((error) => setMessage(error.message, true)));
+      return button;
+    }));
+  }
+
   async function setDocumentType(typeId) {
+    const previousType = docType();
     preferredDocumentType = typeId;
     await extensionStorage.set({ preferredDocumentType: typeId });
     await ensureDraftReportForCapture();
     report.documentType = typeId;
+    // 손대지 않은 기본 제목이면 새 유형의 기본 제목으로 바꾼다.
+    if (CaptureITDocumentTypes.isDefaultTitle(report.title) || report.title === previousType.defaultTitle) {
+      report.title = docType().defaultTitle;
+    }
     await saveReport();
     renderAll();
-    setMessage(`문서 유형을 '${docType().name}'(으)로 바꿨습니다. 적어 둔 내용은 그대로입니다.`);
+    if (elements.reportSwitchDialog.open) elements.reportSwitchDialog.close();
+    setMessage(`'${docType().name}'(으)로 정했습니다. ${docType().capture.idle}`);
   }
 
   // 수집 설정: 클릭한 곳 표시. 실제로 그리는 쪽(background.js)과 같은 코드로 미리보기를 그린다.
@@ -2054,6 +2098,9 @@
     await CaptureITStorage.putReport(created);
     await refreshReportSummaries();
     await loadReport(created.id);
+    // 새 보고서는 목적부터 고르게 한다(작업대에 "무엇을 만들까요?"가 뜬다).
+    if (elements.reportSwitchDialog.open) elements.reportSwitchDialog.close();
+    setMessage('새 보고서를 만들었습니다. 무엇을 만들지 고르거나, 바로 녹화를 시작하세요.');
   }
 
   async function removeReport() {
@@ -2477,6 +2524,7 @@
     const ensured = CaptureITDomain.ensureDraftReport(report);
     if (ensured === report) return;
     report = ensured;
+    if (CaptureITDocumentTypes.isDefaultTitle(report.title)) report.title = docType().defaultTitle;
     try {
       await CaptureITStorage.putReport(report);
       await refreshReportSummaries();
@@ -3189,6 +3237,7 @@
       const request = {
         ...CaptureITLlm.buildTestCaseDescriptionRequest(feature, hydratedSteps, {
           changePurpose: report && report.changePurpose || '',
+          documentType: docType(),
         }),
         evidencePacket,
       };
@@ -3434,7 +3483,7 @@
     const { entries, manifest } = buildExportEntries();
     setMessage(`ZIP 생성 중 · ${entries.length}개 파일 처리`);
     const archive = await CaptureITZip.writeZip(entries);
-    if (await saveZip(archive, exportFilename('QA결과'), 'report')) {
+    if (await saveZip(archive, exportFilename(docType().zipSuffix), 'report')) {
       elements.exportDialog.close();
       setMessage(`증적 문서를 저장했습니다 · ${itemWord()} ${manifest.summary.total}개${docType().verdict ? ` · ${manifest.overallStatus}` : ''}`, false, { label: '폴더에서 보기', run: showLastDownloadFile });
     }
@@ -3659,6 +3708,7 @@
   elements.closeExport.addEventListener('click', () => elements.exportDialog.close());
   elements.toggleView.addEventListener('click', () => switchView().catch((error) => setMessage(error.message, true)));
   elements.openReportSwitch.addEventListener('click', () => elements.reportSwitchDialog.showModal());
+  elements.reportType.addEventListener('click', () => elements.reportSwitchDialog.showModal());
   elements.closeReportSwitch.addEventListener('click', () => elements.reportSwitchDialog.close());
   elements.openStorageDetail.addEventListener('click', () => elements.storageDetailDialog.showModal());
   elements.closeStorageDetail.addEventListener('click', () => elements.storageDetailDialog.close());

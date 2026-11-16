@@ -12,9 +12,9 @@
   <header class="app-bar">
     <img class="app-mark" src="icons/captureit-icon-32.png" alt="" width="20" height="20">
     <button id="open-report-switch" class="report-name" type="button" aria-haspopup="dialog" title="보고서 바꾸기·새로 만들기">
-      <span id="report-name">새 QA 보고서</span><span class="report-name-caret" aria-hidden="true">▾</span>
+      <span id="report-name">CaptureIT</span><span class="report-name-caret" aria-hidden="true">▾</span>
     </button>
-    <span id="report-type" class="report-type">QA 결과 보고</span>
+    <button id="report-type" class="report-type" type="button" title="문서 유형 바꾸기">QA 결과 보고</button>
     <span id="save-status" class="save-status">저장됨</span>
     <button id="toggle-view" class="text-button" type="button" hidden>넓게 보기</button>
     <div class="more-menu-wrap">
@@ -37,8 +37,8 @@
     <div class="capture-line">
       <span id="session-status" class="rec-dot" aria-hidden="true">녹화 중</span>
       <div class="capture-text">
-        <h1 id="capture-first-heading" class="capture-title">테스트 화면을 녹화하세요</h1>
-        <p id="capture-mode-hint" class="capture-hint">테스트를 평소처럼 진행하면 화면과 맥락이 자동으로 저장됩니다.</p>
+        <h1 id="capture-first-heading" class="capture-title">화면을 녹화하세요</h1>
+        <p id="capture-mode-hint" class="capture-hint">화면을 평소처럼 조작하면 화면과 맥락이 자동으로 저장됩니다.</p>
       </div>
       <div class="capture-actions">
         <button id="toggle-session" class="button button-primary" type="button">녹화 시작</button>
@@ -57,6 +57,11 @@
   </section>
 
   <main id="workspace" class="workspace" data-pane="inbox">
+    <section id="purpose-start" class="purpose-start" aria-labelledby="purpose-heading" hidden>
+      <h2 id="purpose-heading">무엇을 만들까요?</h2>
+      <p class="hint">고른 목적에 맞게 항목 이름, 적는 칸, 문서 모양이 정해집니다. 나중에 머리줄의 유형을 눌러 바꿀 수 있습니다.</p>
+      <div id="purpose-options" class="purpose-options"></div>
+    </section>
     <div id="guidance-banner" class="guidance" aria-live="polite" hidden></div>
     <div class="pane-switch" role="group" aria-label="보기 전환">
       <button id="show-inbox" class="pane-switch-button" type="button" aria-pressed="true">증적 <span id="pane-count-inbox">0</span></button>

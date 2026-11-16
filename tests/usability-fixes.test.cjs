@@ -86,7 +86,7 @@ test('자동 AI 기능은 연결이 확인된 뒤에만 돌고, AI 호출은 시
 test('ZIP 저장은 실제 저장(또는 취소)을 기다리고, 제목과 시각으로 파일 이름을 짓는다', () => {
   assert.match(editorSource, /const result = await waitForDownload\(downloadId\);/);
   assert.match(editorSource, /result\.error === 'USER_CANCELED'/);
-  assert.match(editorSource, /saveZip\(archive, exportFilename\('QA결과'\), 'report'\)/);
+  assert.match(editorSource, /saveZip\(archive, exportFilename\(docType\(\)\.zipSuffix\), 'report'\)/, '파일 이름도 목적을 따른다(QA결과, 테스트결과서, PoC기록, 화면설명서)');
   assert.doesNotMatch(editorSource, /\$\{report\.id\}-qa-result\.zip/);
 });
 

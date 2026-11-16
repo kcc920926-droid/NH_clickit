@@ -84,7 +84,7 @@
       viewer: { primary: 'report.html', fallback: 'report.md' },
       report: {
         id: report.id,
-        title: report.title || DEFAULT_REPORT_TITLE,
+        title: report.title || (report.documentType ? DocumentTypes.documentType(report.documentType).defaultTitle : DEFAULT_REPORT_TITLE),
         projectName: report.projectName || '',
         author: report.author || '',
         changePurpose: report.changePurpose || '',

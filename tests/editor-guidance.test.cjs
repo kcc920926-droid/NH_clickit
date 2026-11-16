@@ -39,10 +39,10 @@ test('renderGuidance는 녹화 중이면 녹화 안내를, 아니고 증적이 �
   // 단계가 없으므로 녹화 상태와 작업 상태만 보고 고른다.
   assert.match(renderGuidanceBody, /const recording = Boolean\(session && session\.active\);/);
   const ifElseMatch = renderGuidanceBody.match(
-    /if \(recording\) (messages\.push\('[^']*'\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
+    /if \(recording\) (messages\.push\([^;]*\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
   );
   assert.ok(ifElseMatch, '녹화 중/아님에 따라 다른 안내를 push해야 한다');
-  assert.match(ifElseMatch[1], /messages\.push\('테스트 화면을 평소처럼 조작하세요\./);
+  assert.match(ifElseMatch[1], /messages\.push\(docType\(\)\.capture\.recording\);/, '녹화 중 안내는 문서 유형(목적)을 따른다');
   assert.match(ifElseMatch[2], /messages\.push\('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요\(Ctrl\+V\)\.'\)/);
   assert.doesNotMatch(renderGuidanceBody, /activeStageIndex|단계/, '안내가 단계 번호에 기대지 않는다');
 });

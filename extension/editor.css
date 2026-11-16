@@ -69,7 +69,8 @@ textarea { resize: vertical; }
 .report-name:hover { background: var(--line-2); }
 #report-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-name-caret { color: var(--ink-3); font-size: 10px; }
-.report-type { flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-2); font-size: 11px; white-space: nowrap; }
+.report-type { flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-2); background: var(--surface); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.report-type:hover { border-color: #c9d0d8; color: var(--ink); }
 .save-status { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .more-menu-wrap { position: relative; }
 .more-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(20, 24, 30, .12); }
@@ -77,7 +78,10 @@ textarea { resize: vertical; }
 .more-menu-item:hover { background: var(--line-2); }
 
 /* ── 수집 줄 ────────────────────────────────────────── */
-.capture-bar { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.capture-bar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+/* 한 줄로 긴 글(방금 찍힌 화면의 페이지 제목·주소 등)이 수집 줄 폭을 늘려 녹화 종료 버튼을 화면 밖으로
+   밀어내던 문제(3.1.0)를 막는다: 수집 줄의 칸들은 내용이 길어도 줄 폭보다 넓어지지 않는다. */
+.capture-bar > * { min-width: 0; max-width: 100%; }
 .capture-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
 .rec-dot { flex: none; width: 10px; height: 10px; overflow: hidden; border-radius: 50%; background: var(--line); text-indent: 20px; white-space: nowrap; }
 .rec-dot.is-on { background: var(--rec); animation: rec-pulse 1.6s ease-in-out infinite; }
@@ -86,7 +90,7 @@ textarea { resize: vertical; }
 .capture-text { flex: 1 1 220px; min-width: 0; }
 .capture-title { font-size: 15px; font-weight: 700; }
 .capture-hint { margin: 2px 0 0; color: var(--ink-2); font-size: 12px; }
-.capture-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.capture-actions { display: flex; flex: none; flex-wrap: wrap; gap: 6px; }
 /* 녹화 중에는 종료 버튼이 화면에서 가장 눈에 띄는 버튼이다(빨간 바탕). 아래 상태 줄에도 같은 버튼을 둬서
    사이드 패널에서 목록을 내려 봐도 늘 보이게 한다. */
 .button-stop, #toggle-session.is-recording { color: #fff; background: var(--rec); }
@@ -104,7 +108,7 @@ textarea { resize: vertical; }
 body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: var(--accent); background: var(--accent-soft); }
 .capture-shortcut-hint { color: var(--ink-3); }
 .recent-evidence:empty { display: none; }
-.recent-evidence-card { display: flex; width: 100%; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
+.recent-evidence-card { display: flex; width: 100%; min-width: 0; max-width: 100%; overflow: hidden; align-items: center; gap: 10px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
 .recent-evidence-card:hover { border-color: #c9d0d8; }
 .recent-evidence-card img { width: 72px; flex: none; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 3px; background: var(--line-2); }
 .recent-evidence-card > div { flex: 1; min-width: 0; }
@@ -409,3 +413,16 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .map-to-feature-button svg { width: 14px; height: 14px; }
 .message-action { margin-left: 4px; padding: 2px 6px; }
 button[aria-busy="true"] { cursor: progress; }
+
+/* 처음 시작: 무엇을 만들까요? 목적을 고르면 이름·칸·문서 모양이 정해진다. */
+.purpose-start { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.purpose-start h2 { font-size: 16px; }
+.purpose-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 6px; }
+.purpose-option { display: grid; align-content: start; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
+.purpose-option:hover { border-color: var(--accent); background: var(--accent-soft); }
+.purpose-option strong { font-size: 14px; }
+.purpose-when { color: var(--ink-2); font-size: 12px; }
+.purpose-output { color: var(--ink-3); font-size: 12px; }
+.purpose-output::before { content: "→ "; }
+.purpose-terms { color: var(--ink-3); font-size: 11px; }
+.workspace.choosing .workspace-grid, .workspace.choosing .pane-switch, .workspace.choosing .guidance { display: none; }

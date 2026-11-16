@@ -368,9 +368,21 @@
     };
   }
 
+  // options.documentType: CaptureITDocumentTypes의 유형. 목적(QA·테스트·PoC·설명서)에 맞게 쓰도록 할 일과 칸 이름을 알려 준다.
   function buildTestCaseDescriptionRequest(featureSpec, evidenceSteps = [], options = {}) {
+    const type = options.documentType || null;
     return {
-      task: 'Generate a concise Korean QA test case description from the provided evidence only.',
+      task: type && type.aiTask ? type.aiTask : 'Generate a concise Korean QA test case description from the provided evidence only.',
+      ...(type ? {
+        documentType: {
+          id: type.id,
+          name: type.name,
+          item: type.item,
+          description: type.descriptionLabel,
+          fields: (type.fields || []).map((field) => field.label),
+          judged: Boolean(type.verdict),
+        },
+      } : {}),
       outputLanguage: options.outputLanguage || 'ko',
       writingStyle: options.writingStyle || 'concise',
       feature: featureContext({

@@ -148,7 +148,7 @@ test('수집 줄: 녹화 버튼 하나와 이미지 불러오기, 붙여넣기 �
   assert.doesNotMatch(html, /role=["']radiogroup["']/);
   assert.doesNotMatch(html, /data-capture-mode=/);
   assert.match(html, /<section id=["']capture-bar["'][^>]*class=["'][^"']*capture-first-panel/);
-  assert.match(html, /테스트 화면을 녹화하세요/);
+  assert.match(html, /<h1 id="capture-first-heading" class="capture-title">화면을 녹화하세요<\/h1>/, '처음 문구는 목적과 무관하고, 목적을 고르면 그 목적의 문구로 바뀐다');
   assert.match(html, /id=["']toggle-session["'][^>]*>녹화 시작<\/button>/);
   assert.match(html, />이미지 불러오기<input id=["']image-import["']/);
   assert.match(html, /중요한 영역은 Ctrl\+Shift\+클릭으로 직접 지정할 수 있습니다\./);

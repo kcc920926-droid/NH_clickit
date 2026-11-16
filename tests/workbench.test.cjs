@@ -100,3 +100,10 @@ test('화면 안내는 끌어다 놓기 대신 붙여넣기·이미지 불러오
   assert.match(body, /'연결 버튼을 누르면 → '/);
   assert.match(body, /`연결 버튼을 누른 뒤 연결할 \$\{itemWord\('을\/를'\)\} 고르세요\.`/);
 });
+
+test('방금 찍힌 화면의 긴 설명이 수집 줄을 넓혀 녹화 종료 버튼을 화면 밖으로 밀지 않는다(3.1.0 버그)', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '../extension/editor.css'), 'utf8');
+  assert.match(css, /\.capture-bar \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(css, /\.capture-bar > \* \{ min-width: 0; max-width: 100%; \}/);
+  assert.match(css, /\.recent-evidence-card \{[^}]*min-width: 0; max-width: 100%; overflow: hidden;/);
+});

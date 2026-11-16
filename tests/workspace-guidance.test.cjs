@@ -41,7 +41,7 @@ const renderFeatureBody = extractFunctionBody(source, 'renderFeature');
 test('Requirement 1.5 - session이 비활성 상태면 renderGuidance는 Capture_Stage 시작 안내 문구를 push한다', () => {
   assert.match(renderGuidanceBody, /const recording = Boolean\(session && session\.active\);/);
   const ifElseMatch = renderGuidanceBody.match(
-    /if \(recording\) (messages\.push\('[^']*'\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
+    /if \(recording\) (messages\.push\([^;]*\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
   );
   assert.ok(ifElseMatch, '녹화 중/아님에 따라 다른 안내를 push해야 한다');
 
