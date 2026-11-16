@@ -489,7 +489,7 @@ test('Property 43: createRecordingSession output is a strict superset of createS
     fc.property(
       fc.record({
         mode: fc.constantFrom('event', 'manual', 'context'),
-        now: fc.date().map((date) => date.toISOString()),
+        now: fc.date({ noInvalidDate: true }).map((date) => date.toISOString()),
         id: fc.uuid(),
         inputDebounceMs: fc.integer({ min: 0, max: 5000 }),
         mutationQuietMs: fc.integer({ min: 0, max: 5000 }),

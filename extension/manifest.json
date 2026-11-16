@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CaptureIT",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "사내 QA 증적을 순서와 맥락으로 수집하고 보고서로 생성합니다.",
   "permissions": [
     "activeTab",
