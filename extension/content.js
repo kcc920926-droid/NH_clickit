@@ -95,14 +95,30 @@
     };
   }
 
+  const TRIGGER_LABELS = {
+    baseline: '시작 화면',
+    click: '클릭 후 화면',
+    submit: '제출 후 화면',
+    navigation: '페이지 이동',
+    'route-change': '화면 전환',
+    'form-input': '입력',
+    'manual-pin': '강조 캡처',
+    'shortcut-context': '강조 캡처',
+    'context-menu': '강조 캡처',
+  };
+
   function showCaptureReceipt(receipt = {}) {
-    const key = receipt.evidenceId || `${receipt.sequenceNo || ''}:${receipt.triggerType || ''}`;
+    // 같은 증적에 여러 번 합쳐질 수 있으므로 합친 경우는 순번만으로 중복 판단하지 않는다.
+    const key = receipt.merged
+      ? ''
+      : receipt.evidenceId || `${receipt.sequenceNo || ''}:${receipt.triggerType || ''}`;
     if (key && key === lastReceiptKey) return;
     lastReceiptKey = key;
     const context = receiptContext(receipt);
     const target = context.target || {};
     const sequence = receipt.sequenceNo ? `#${receipt.sequenceNo}` : '저장됨';
-    const trigger = receipt.triggerType || 'capture';
+    const triggerLabel = TRIGGER_LABELS[receipt.triggerType] || '캡처';
+    const trigger = receipt.merged ? `${triggerLabel} · 같은 화면이라 #${receipt.sequenceNo || ''}에 합침` : triggerLabel;
     const pageTitle = shortText(context.pageTitle || document.title || '현재 페이지', 56);
     const targetText = shortText(target.visibleText || target.ariaLabel || target.cssSelector || '화면 컨텍스트', 90);
 
@@ -133,7 +149,7 @@
 
     receiptToast.replaceChildren();
     const title = document.createElement('strong');
-    title.textContent = `CaptureIT 캡처 ${sequence}`;
+    title.textContent = receipt.merged ? 'CaptureIT 중복 화면 합침' : `CaptureIT 캡처 ${sequence}`;
     const meta = document.createElement('div');
     meta.textContent = `${trigger} · ${pageTitle}`;
     const detail = document.createElement('div');

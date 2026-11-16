@@ -33,6 +33,7 @@
   </nav>
 
   <div id="guidance-banner" class="guidance-banner" aria-live="polite" hidden></div>
+  <p id="editor-message" class="message" role="status"></p>
 
   <main class="layout">
     <section id="stage-capture" class="panel capture-first-panel wizard-stage" aria-labelledby="capture-first-heading">
@@ -41,12 +42,17 @@
            모드로 동작하며, 이 <select>는 기존 session.mode 저장 계약을 그대로 유지하기 위한
            값 보관용 hidden 필드다(테스트/저장 로직 변경 없음). -->
       <select id="capture-mode" hidden><option value="event" selected>이벤트 모드</option><option value="context">컨텍스트 모드</option></select>
-      <span id="session-status" class="status-pill status-pill-off">RECORDING</span>
+      <span id="session-status" class="status-pill status-pill-off">녹화 중</span>
       <h1 id="capture-first-heading" class="capture-idle-title">테스트 화면을 녹화하세요</h1>
       <p id="capture-mode-hint" class="capture-idle-subtitle">테스트를 평소처럼 진행하면 화면, DOM, API 맥락이 자동으로 저장됩니다.</p>
       <button id="toggle-session" class="button button-primary capture-idle-cta" type="button" data-primary-action="recording-session">녹화 시작</button>
       <label class="button button-secondary file-button capture-idle-secondary">기존 이미지 불러오기<input id="image-import" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+      <button id="export-evidence-quick" class="button button-secondary capture-idle-secondary" type="button">증적만 ZIP 받기</button>
       <p class="hint capture-shortcut-hint">중요한 영역은 Ctrl+Shift+클릭으로 직접 지정할 수 있습니다.</p>
+      <div id="paste-zone" class="paste-zone" aria-live="polite">
+        <strong id="paste-zone-title">자동 수집이 안 되는 화면은 붙여넣으세요</strong>
+        <span id="paste-zone-hint">다른 브라우저나 IE 모드 화면은 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요. 이미지 파일은 창 어디에나 끌어다 놓으면 됩니다.</span>
+      </div>
       <div id="recording-summary" class="recording-summary" hidden aria-live="polite">
         <div class="recording-summary-item"><span id="recording-summary-screens" class="recording-summary-value">0</span><span class="recording-summary-label">화면</span></div>
         <div class="recording-summary-item"><span id="recording-summary-inputs" class="recording-summary-value">0</span><span class="recording-summary-label">입력 흐름</span></div>
@@ -59,12 +65,12 @@
       <div class="panel-heading">
         <div><span class="eyebrow">매핑 및 결과 입력</span><h2 id="mapping-result-heading">증적 매핑과 테스트케이스 결과</h2></div>
       </div>
-      <p id="editor-message" class="message" role="status"></p>
       <div class="mapping-result-grid">
         <div class="mapping-result-column">
           <section id="evidence-drop-zone" class="panel inbox-panel" aria-labelledby="inbox-heading">
             <div class="panel-heading">
               <div><span class="eyebrow">증적 수집함</span><h2 id="inbox-heading">수집된 증적</h2></div>
+              <button id="clean-duplicates" class="button button-secondary" type="button" title="같은 화면이 연달아 찍힌 증적을 하나로 합칩니다">중복 화면 정리</button>
             </div>
             <section class="recent-evidence-panel" aria-labelledby="recent-evidence-heading">
               <div class="recent-evidence-heading">
@@ -113,13 +119,14 @@
         <div class="completion-summary-item"><span id="completion-summary-features" class="completion-summary-value">0</span><span class="completion-summary-label">검증 항목</span></div>
         <div class="completion-summary-item"><span id="completion-summary-pass" class="completion-summary-value">0</span><span class="completion-summary-label">PASS</span></div>
         <div class="completion-summary-item"><span id="completion-summary-fail" class="completion-summary-value">0</span><span class="completion-summary-label">FAIL</span></div>
-        <div class="completion-summary-item"><span id="completion-summary-na" class="completion-summary-value">0</span><span class="completion-summary-label">N/A</span></div>
+        <div class="completion-summary-item"><span id="completion-summary-na" class="completion-summary-value">0</span><span class="completion-summary-label">미판정</span></div>
         <div class="completion-summary-item"><span id="completion-summary-evidence" class="completion-summary-value">0</span><span class="completion-summary-label">포함 증적</span></div>
         <div class="completion-summary-item"><span id="completion-summary-ai-images" class="completion-summary-value">0</span><span class="completion-summary-label">AI 입력 이미지</span></div>
       </div>
       <button id="export-report" class="button button-primary completion-primary-cta" type="button">증적 문서 생성</button>
       <div class="completion-secondary-actions">
         <button id="preview-report" class="button button-secondary" type="button">미리보기</button>
+        <button id="export-evidence-completion" class="button button-secondary" type="button">증적만 ZIP</button>
         <button id="open-save-project" class="button button-secondary" type="button">현재 작업 백업</button>
       </div>
       <section class="warning-box" aria-labelledby="warning-heading">
@@ -263,6 +270,7 @@
   <script src="shared/zip.js"></script>
   <script src="shared/screenshot-cropper.js"></script>
   <script src="shared/evidence-step-builder.js"></script>
+  <script src="shared/evidence-dedupe.js"></script>
   <script src="shared/llm.js"></script>
   <script src="shared/wizard-stage.js"></script>
   <script src="editor.js"></script>

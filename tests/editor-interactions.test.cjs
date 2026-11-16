@@ -179,7 +179,7 @@ test('requestTestCaseDescription은 EvidenceStep/LLM packet을 구성하고 검�
   assert.match(body, /applyTestCaseDescription\(feature,\s*validated\)/);
 });
 
-test('applyTestCaseDescription은 네 가지 finalStatus를 verdict에 매핑한다', () => {
+test('applyTestCaseDescription은 판정을 바꾸지 않고 AI 의견만 참고용으로 남긴다', () => {
   const script = source;
   const body = extractFunctionBody(source, 'applyTestCaseDescription');
 
@@ -190,7 +190,13 @@ test('applyTestCaseDescription은 네 가지 finalStatus를 verdict에 매핑한
   assert.match(body, /feature\.result\.expectedResult\s*=/);
   assert.match(body, /feature\.result\.actualResult\s*=/);
   assert.match(body, /feature\.result\.verification\s*=/);
-  assert.match(body, /feature\.result\.status\s*=\s*TEST_CASE_STATUS_TO_VERDICT\[validated\.finalStatus\]/);
+  // PRD FR-03: AI는 판정(result.status)을 기록하지 않는다.
+  assert.doesNotMatch(body, /feature\.result\.status\s*=/);
+  assert.match(body, /feature\.aiOpinion\s*=/);
+  assert.match(body, /status:\s*TEST_CASE_STATUS_TO_VERDICT\[validated\.finalStatus\]/);
+  // 사용자가 이미 쓴 내용은 덮어쓰지 않는다.
+  assert.match(body, /fillIfEmpty\(feature\.result\.expectedResult/);
+  assert.match(body, /fillIfEmpty\(feature\.result\.actualResult/);
 });
 
 // Bug_Fullscreen_Thumbnail: 모든 증적 썸네일이 항상 전체 화면 스크린샷(evidence.imageDataUrl)만

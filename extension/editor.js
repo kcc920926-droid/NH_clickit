@@ -113,6 +113,12 @@
     testLlmRecommendation: byId('test-llm-recommendation'),
     toggleSession: byId('toggle-session'),
     validationWarnings: byId('validation-warnings'),
+    exportEvidenceQuick: byId('export-evidence-quick'),
+    exportEvidenceCompletion: byId('export-evidence-completion'),
+    cleanDuplicates: byId('clean-duplicates'),
+    pasteZone: byId('paste-zone'),
+    pasteZoneTitle: byId('paste-zone-title'),
+    pasteZoneHint: byId('paste-zone-hint'),
   };
 
   // Node_Context_Preview: capture-node 하나를 hover할 때 보여주는 공유 툴팁 엘리먼트.
@@ -196,6 +202,13 @@
   // featureCard()가 이 값을 읽어 해당 feature 카드에만 진행 표시(체크리스트/그라데이션)를 그린다.
   let aiPipelineStatus = null;
   let aiPipelineClearTimer = null;
+  // 녹화 대상 탭에서 콘텐츠 스크립트가 응답했는지(IE 모드 탭 등은 응답하지 않는다).
+  let autoCaptureAvailable = true;
+  // 붙여넣기·파일 불러오기 전용 수집 묶음. 녹화 세션과 순번이 섞이지 않도록 따로 관리하고,
+  // 마지막 입력 후 IMPORT_SESSION_GAP_MS 안에 이어 넣으면 같은 묶음으로 잇는다.
+  let importSession = null;
+  let importSessionLastAt = 0;
+  const IMPORT_SESSION_GAP_MS = 10 * 60 * 1000;
 
   const roleLabel = { before: '수행 전', action: '수행 시점', after: '수행 후' };
   // 캡처 모드 선택 UI는 기본 화면에서 제거됐으나(iOS 원칙 1, 2), 내부적으로는 항상 'event' 모드로
@@ -333,7 +346,7 @@
     const active = Boolean(session && session.active);
     if (sessionButtonState !== 'STARTING') sessionButtonState = active ? 'ACTIVE' : 'INACTIVE';
     const starting = sessionButtonState === 'STARTING';
-    elements.sessionStatus.textContent = active ? 'RECORDING' : starting ? '녹화 시작 중…' : '';
+    elements.sessionStatus.textContent = active ? '녹화 중' : starting ? '녹화 시작 중…' : '';
     elements.sessionStatus.className = `status-pill ${active ? 'status-pill-recording' : 'status-pill-off'}`;
     elements.captureFirstHeading.textContent = active ? '녹화 중' : '테스트 화면을 녹화하세요';
     elements.captureModeHint.textContent = starting
@@ -346,6 +359,7 @@
     elements.captureMode.disabled = starting || active;
     if (active) elements.captureMode.value = session.mode;
     renderRecordingSummary(active);
+    renderPasteZone();
   }
 
   function formatTimestamp(value) {
@@ -398,7 +412,7 @@
   // 'PASS' 기본값 대신, 이제 판정 자체가 이 pill 클릭 즉시 feature.result.status에 반영된다
   // (별도 확인 단계 없음 - 완료 탭으로 이동하는 것 자체가 사용자의 최종 승인으로 간주된다).
   const VERDICT_CYCLE = ['PASS', 'FAIL', null];
-  const VERDICT_LABEL = { PASS: 'PASS', FAIL: 'FAIL', null: 'N/A' };
+  const VERDICT_LABEL = { PASS: 'PASS', FAIL: 'FAIL', null: '미판정' };
   const TEST_CASE_STATUS_TO_VERDICT = { PASS: 'PASS', FAIL: 'FAIL', INCOMPLETE: null, NOT_JUDGED: null };
 
   async function cycleVerdict(feature) {
@@ -416,8 +430,10 @@
     pill.type = 'button';
     pill.className = `feature-status-pill verdict-${(status || 'na').toLowerCase()}`;
     pill.textContent = VERDICT_LABEL[status];
-    pill.title = '클릭해서 판정 변경 (PASS → FAIL → N/A)';
-    pill.setAttribute('aria-label', `판정: ${VERDICT_LABEL[status]}. 클릭해서 변경`);
+    const opinion = feature.aiOpinion && feature.aiOpinion.status;
+    const opinionText = opinion ? ` · AI 의견: ${opinion}${feature.aiOpinion.basis ? ` (${feature.aiOpinion.basis})` : ''}` : '';
+    pill.title = `클릭해서 판정 변경 (PASS → FAIL → 미판정)${opinionText}`;
+    pill.setAttribute('aria-label', `판정: ${VERDICT_LABEL[status]}. 클릭해서 변경${opinionText}`);
     pill.addEventListener('click', (event) => {
       event.stopPropagation();
       cycleVerdict(feature).catch((error) => setMessage(`판정 변경 실패: ${error.message}`, true));
@@ -556,6 +572,12 @@
     resultFields.append(expectedField, actualField);
 
     card.append(header);
+    if (feature.aiOpinion && feature.aiOpinion.status) {
+      const opinionHint = document.createElement('p');
+      opinionHint.className = 'ai-opinion-hint';
+      opinionHint.textContent = `AI 의견: ${feature.aiOpinion.status} · 참고용이며 판정은 직접 선택합니다`;
+      card.append(opinionHint);
+    }
     if (pipelineChecklist) card.append(pipelineChecklist);
     card.append(descriptionField, resultFields, controls);
     return card;
@@ -906,6 +928,18 @@
     meta.className = 'capture-node-meta';
     meta.textContent = evidenceStepLabel(evidence);
     metaRow.append(meta, evidenceRoleBadge(evidence));
+    const mergedEvents = Array.isArray(evidence.mergedEvents) ? evidence.mergedEvents : [];
+    if (mergedEvents.length > 0) {
+      const mergedBadge = document.createElement('span');
+      mergedBadge.className = 'evidence-merged-badge';
+      mergedBadge.textContent = `+${mergedEvents.length}`;
+      mergedBadge.title = `같은 화면 ${mergedEvents.length}번을 합쳤습니다: ${mergedEvents
+        .map((item) => item.targetText || item.triggerType)
+        .filter(Boolean)
+        .slice(0, 5)
+        .join(', ')}`;
+      metaRow.append(mergedBadge);
+    }
     node.append(image, metaRow);
     const mappedTitle = mappedFeatureTitle(evidence);
     if (mappedTitle) {
@@ -1162,6 +1196,7 @@
       .filter(Boolean) : [];
     elements.mappedEvidence.replaceChildren(...mapped.map((item, index) => evidenceCard(item, true, index)));
     renderRecentEvidence();
+    renderExportEvidenceButtons();
     scheduleMappingLinks();
   }
 
@@ -1822,7 +1857,7 @@
 
   async function startRecordingSessionRequest() {
     if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
-      throw new Error('확장 런타임에서만 RecordingSession을 시작할 수 있습니다.');
+      throw new Error('확장 프로그램 안에서만 녹화를 시작할 수 있습니다.');
     }
     const tab = await activeTabForRecording();
     const response = await chrome.runtime.sendMessage({
@@ -1832,13 +1867,14 @@
       recordingPolicy: CaptureITDomain.defaultRecordingPolicy({ mode: elements.captureMode.value }),
       captureBaselineContext: baselineContextForRecordingStart(),
     });
-    if (!response || !response.ok) throw new Error(response && response.error ? response.error : 'RecordingSession 시작 실패');
+    if (!response || !response.ok) throw new Error(response && response.error ? response.error : '녹화 시작 실패');
+    autoCaptureAvailable = response.autoCaptureAvailable !== false;
     return response.session;
   }
 
   async function stopRecordingSessionRequest() {
     if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
-      throw new Error('확장 런타임에서만 RecordingSession을 종료할 수 있습니다.');
+      throw new Error('확장 프로그램 안에서만 녹화를 종료할 수 있습니다.');
     }
     const tab = await activeTabForRecording();
     const response = await chrome.runtime.sendMessage({
@@ -1846,7 +1882,7 @@
       sessionId: session && session.id,
       windowId: tab && tab.windowId,
     });
-    if (!response || !response.ok) throw new Error(response && response.error ? response.error : 'RecordingSession 종료 실패');
+    if (!response || !response.ok) throw new Error(response && response.error ? response.error : '녹화 종료 실패');
     return response.session;
   }
 
@@ -1860,7 +1896,10 @@
       session = await startRecordingSessionRequest();
       sessionButtonState = 'ACTIVE';
       await refreshEvidence();
-      setMessage('녹화를 시작했습니다.');
+      setMessage(autoCaptureAvailable
+        ? '녹화를 시작했습니다.'
+        : '녹화를 시작했지만 이 탭은 클릭·화면 전환 자동 수집이 되지 않습니다(IE 모드 등). 화면을 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요.', !autoCaptureAvailable);
+      renderPasteZone();
     } catch (error) {
       sessionButtonState = 'INACTIVE';
       renderSession();
@@ -1903,7 +1942,7 @@
       await CaptureITStorage.putReport(report);
       await refreshReportSummaries();
     } catch (error) {
-      setMessage(`Draft_Report 저장 실패: ${error.message}`, true);
+      setMessage(`작업 초안 저장 실패: ${error.message}`, true);
     }
     renderAll();
   }
@@ -1926,53 +1965,205 @@
     });
   }
 
-  async function importImages(files) {
-    await ensureDraftReportForCapture();
-    if (!session) {
-      session = CaptureITDomain.createSession('manual');
-      session.active = false;
+  // 붙여넣기·파일 불러오기 전용 수집 묶음을 돌려준다. 녹화 세션과는 별개라 순번이 섞이지 않는다.
+  // 마지막 입력 후 IMPORT_SESSION_GAP_MS 안에 이어서 넣으면 같은 묶음(같은 Capture_Graph)으로 잇는다.
+  function importSessionFor(nowMs) {
+    if (!importSession || nowMs - importSessionLastAt > IMPORT_SESSION_GAP_MS) {
+      importSession = CaptureITDomain.createSession('manual');
+      importSession.active = false;
+      importSession.lastEvidenceId = null;
     }
+    importSessionLastAt = nowMs;
+    return importSession;
+  }
+
+  async function fingerprintFor(imageDataUrl) {
+    try {
+      return await CaptureITEvidenceDedupe.fingerprintImageDataUrl(imageDataUrl);
+    } catch {
+      return null;
+    }
+  }
+
+  // 모든 외부 이미지 입력(파일 선택, 끌어다 놓기, 붙여넣기)이 이 함수 하나로 증적이 된다.
+  // origin: 'file' | 'paste'. 붙여넣기는 출처를 file-import로 유지하고(manifest 구조 불변)
+  // triggerType만 clipboard-paste로 구분한다. 수집 시각은 붙여넣은 시각이다.
+  async function importImages(files, origin = 'file') {
+    await ensureDraftReportForCapture();
+    const fromPaste = origin === 'paste';
+    const target = importSessionFor(Date.now());
     const rejected = [];
+    let added = 0;
+    let skippedDuplicates = 0;
     for (const file of files) {
+      const label = fromPaste ? '붙여넣은 이미지' : file.name;
       try {
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('지원하지 않는 형식');
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+          throw new Error(/\.zip$/i.test(file.name || '') ? 'ZIP은 더보기 → QA 뷰어 열기에서 엽니다' : '지원하지 않는 형식');
+        }
         const imageDataUrl = await readFileAsDataUrl(file);
-        await loadImage(imageDataUrl);
+        const loaded = await loadImage(imageDataUrl);
+        // 문서용 자르기가 편집기 창 크기가 아니라 이미지 원래 크기를 기준으로 하도록 기록한다.
+        const viewportSize = { width: loaded.naturalWidth, height: loaded.naturalHeight };
+        const fingerprint = await fingerprintFor(imageDataUrl);
+        const previous = target.lastEvidenceId
+          ? editorState.evidence.find((item) => item.id === target.lastEvidenceId)
+          : null;
+        // 같은 이미지를 연달아 넣으면 한 번만 받는다.
+        if (previous && fingerprint && previous.fingerprint === fingerprint) {
+          skippedDuplicates += 1;
+          continue;
+        }
+        const nowIso = new Date().toISOString();
+        const pastedTitle = `붙여넣은 화면 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`;
         const evidence = {
           id: crypto.randomUUID(),
-          sessionId: session.id,
-          sequenceNo: CaptureITDomain.nextSequence(session),
-          capturedAt: new Date(file.lastModified || Date.now()).toISOString(),
-          triggerType: 'file-import',
+          sessionId: target.id,
+          sequenceNo: CaptureITDomain.nextSequence(target),
+          capturedAt: fromPaste ? nowIso : new Date(file.lastModified || Date.now()).toISOString(),
+          triggerType: fromPaste ? 'clipboard-paste' : 'file-import',
           source: 'file-import',
           featureSpecId: null,
-          previousCaptureId: session.lastEvidenceId || null,
+          previousCaptureId: target.lastEvidenceId || null,
           nextCaptureId: null,
           description: '',
-          context: { pageTitle: file.name, target: { visibleText: file.name } },
+          context: fromPaste
+            ? { pageTitle: pastedTitle, target: { visibleText: '' }, viewportSize }
+            : { pageTitle: file.name, target: { visibleText: file.name }, viewportSize },
           imageDataUrl,
           imageBlob: file,
+          fingerprint,
+          mergedEvents: [],
         };
-        if (evidence.previousCaptureId) {
-          const previous = editorState.evidence.find((item) => item.id === evidence.previousCaptureId);
-          if (previous) {
-            previous.nextCaptureId = evidence.id;
-            await CaptureITStorage.putEvidence(previous);
-          }
+        if (previous) {
+          previous.nextCaptureId = evidence.id;
+          await CaptureITStorage.putEvidence(previous);
         }
-        session.lastEvidenceId = evidence.id;
+        target.lastEvidenceId = evidence.id;
         await CaptureITStorage.putEvidence(evidence);
         editorState.evidence.push(evidence);
+        added += 1;
       } catch (error) {
-        rejected.push(`${file.name} (${error.message})`);
+        rejected.push(`${label} (${error.message})`);
       }
     }
-    await CaptureITStorage.putSession(session);
+    await CaptureITStorage.putSession(target);
     editorState = CaptureITDomain.createEditorState(editorState.evidence, editorState.features);
     renderEvidence();
     renderStorageStatus();
+    renderGuidance();
     renderStage();
-    setMessage(rejected.length ? `제외된 파일: ${rejected.join(', ')}` : `${files.length}개 이미지를 수집된 증적에 추가했습니다.`, rejected.length > 0);
+    const parts = [];
+    if (added) parts.push(`${added}개 이미지를 수집된 증적에 추가했습니다.`);
+    if (skippedDuplicates) parts.push(`같은 이미지 ${skippedDuplicates}개는 건너뛰었습니다.`);
+    if (rejected.length) parts.push(`제외: ${rejected.join(', ')}`);
+    setMessage(parts.join(' ') || '추가된 이미지가 없습니다.', rejected.length > 0);
+  }
+
+  function isEditableTarget(target) {
+    if (!target || !target.closest) return false;
+    return Boolean(target.closest('input, textarea, [contenteditable=""], [contenteditable="true"]'));
+  }
+
+  // 작업대 어디서든 Ctrl+V로 이미지를 증적으로 받는다. 입력란에서 글자를 붙여넣는 경우는 가로채지 않는다.
+  function handlePaste(event) {
+    const data = event.clipboardData;
+    if (!data) return;
+    const images = [...(data.files || [])].filter((file) => file.type && file.type.startsWith('image/'));
+    if (images.length === 0) return;
+    const hasText = [...(data.types || [])].includes('text/plain');
+    if (isEditableTarget(event.target) && hasText) return;
+    event.preventDefault();
+    importImages(images, 'paste').catch((error) => setMessage(error.message, true));
+  }
+
+  function draggedFiles(event) {
+    return Boolean(event.dataTransfer && [...(event.dataTransfer.types || [])].includes('Files'));
+  }
+
+  // 붙여넣기 안내 영역. 녹화 대상 탭이 자동 수집되지 않으면 경고 상태로 바꿔 강조한다.
+  function renderPasteZone() {
+    if (!elements.pasteZone) return;
+    const unavailable = Boolean(session && session.active && !autoCaptureAvailable);
+    elements.pasteZone.classList.toggle('paste-zone-warning', unavailable);
+    elements.pasteZoneTitle.textContent = unavailable
+      ? '이 탭은 자동 수집이 되지 않습니다'
+      : '자동 수집이 안 되는 화면은 붙여넣으세요';
+    elements.pasteZoneHint.textContent = unavailable
+      ? 'IE 모드 화면 등은 클릭이 기록되지 않습니다. 화면을 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요.'
+      : '다른 브라우저나 IE 모드 화면은 캡처(Win+Shift+S)한 뒤 이 창에서 Ctrl+V 하세요. 이미지 파일은 창 어디에나 끌어다 놓으면 됩니다.';
+  }
+
+  function renderExportEvidenceButtons() {
+    const empty = editorState.evidence.length === 0;
+    for (const button of [elements.exportEvidenceQuick, elements.exportEvidenceCompletion]) {
+      if (button) button.disabled = empty;
+    }
+    if (elements.cleanDuplicates) elements.cleanDuplicates.disabled = editorState.evidence.length < 2;
+  }
+
+  // 중복 화면 정리: 같은 세션에서 연달아 찍힌 거의 같은 화면을 첫 화면 하나로 합친다.
+  // 직접 지정한 증적(강조·입력·붙여넣기 등), 테스트케이스에 연결된 증적, 결과 메시지가 있는 증적은 건드리지 않는다.
+  async function cleanDuplicateEvidence() {
+    if (editorState.evidence.length < 2) return;
+    elements.cleanDuplicates.disabled = true;
+    try {
+      setMessage('비슷한 화면을 찾고 있습니다…');
+      for (const evidence of editorState.evidence) {
+        if (evidence.fingerprint || !evidence.imageDataUrl) continue;
+        evidence.fingerprint = await fingerprintFor(evidence.imageDataUrl);
+        if (evidence.fingerprint) await CaptureITStorage.putEvidence(evidence);
+      }
+      const plan = CaptureITEvidenceDedupe.planDuplicateCleanup(editorState.evidence);
+      const removeCount = plan.reduce((total, group) => total + group.removeIds.length, 0);
+      if (removeCount === 0) {
+        setMessage('정리할 중복 화면이 없습니다.');
+        return;
+      }
+      if (!confirm(`거의 같은 화면 ${removeCount}장을 찾았습니다. 묶음마다 첫 화면만 남기고 나머지는 지웁니다(지운 화면의 동작 기록은 남은 화면에 합칩니다). 계속할까요?`)) {
+        setMessage('중복 화면 정리를 취소했습니다.');
+        return;
+      }
+      const byId = new Map(editorState.evidence.map((item) => [item.id, item]));
+      const removed = new Set();
+      for (const group of plan) {
+        const keeper = byId.get(group.keepId);
+        const absorbed = group.removeIds.map((id) => byId.get(id)).filter(Boolean);
+        CaptureITEvidenceDedupe.appendMergedEvents(keeper, absorbed);
+        for (const item of absorbed) removed.add(item.id);
+      }
+      // 지운 증적을 건너뛰도록 앞뒤 연결(previous/nextCaptureId)을 다시 잇는다.
+      const survivors = editorState.evidence.filter((item) => !removed.has(item.id));
+      const bySession = new Map();
+      for (const item of survivors) {
+        if (!bySession.has(item.sessionId)) bySession.set(item.sessionId, []);
+        bySession.get(item.sessionId).push(item);
+      }
+      const changed = new Set(plan.map((group) => group.keepId));
+      for (const items of bySession.values()) {
+        items.sort((left, right) => left.sequenceNo - right.sequenceNo);
+        items.forEach((item, index) => {
+          const previousId = index > 0 ? items[index - 1].id : null;
+          const nextId = index < items.length - 1 ? items[index + 1].id : null;
+          if (item.previousCaptureId !== previousId || item.nextCaptureId !== nextId) changed.add(item.id);
+          item.previousCaptureId = previousId;
+          item.nextCaptureId = nextId;
+        });
+      }
+      for (const id of removed) await CaptureITStorage.deleteEvidence(id);
+      for (const id of changed) {
+        const item = byId.get(id);
+        if (item && !removed.has(id)) await CaptureITStorage.putEvidence(item);
+      }
+      editorState = CaptureITDomain.createEditorState(survivors, editorState.features);
+      await saveReport();
+      renderEvidence();
+      renderStorageStatus();
+      renderStage();
+      setMessage(`중복 화면 ${removed.size}장을 정리했습니다.`);
+    } finally {
+      renderExportEvidenceButtons();
+    }
   }
 
   async function ensureThumbnail(evidence) {
@@ -2348,17 +2539,26 @@
     }));
   }
 
+  // AI는 정리하고, 사람이 판정한다(PRD FR-03, FR-06-2).
+  // - 판정(feature.result.status)은 절대 바꾸지 않는다. AI의 판단은 feature.aiOpinion에 참고용으로만 남긴다.
+  //   aiOpinion은 report.js의 buildManifest가 고르는 필드가 아니므로 산출물에 들어가지 않는다.
+  // - 사용자가 이미 쓴 내용은 덮어쓰지 않고, 비어 있는 칸만 AI 초안으로 채운다.
   function applyTestCaseDescription(feature, validated) {
-    feature.description = [
+    const fillIfEmpty = (current, draft) => (String(current || '').trim() ? current : draft);
+    feature.description = fillIfEmpty(feature.description, [
       `목적: ${validated.testPurpose}`,
       `사전조건: ${validated.preconditions}`,
       `절차: ${validated.testProcedure}`,
       `판단 근거: ${validated.judgementBasis}`,
-    ].filter(Boolean).join('\n');
-    feature.result.expectedResult = validated.expectedResult;
-    feature.result.actualResult = validated.actualResult;
-    feature.result.verification = validated.judgementBasis;
-    feature.result.status = TEST_CASE_STATUS_TO_VERDICT[validated.finalStatus];
+    ].filter(Boolean).join('\n'));
+    feature.result.expectedResult = fillIfEmpty(feature.result.expectedResult, validated.expectedResult);
+    feature.result.actualResult = fillIfEmpty(feature.result.actualResult, validated.actualResult);
+    feature.result.verification = fillIfEmpty(feature.result.verification, validated.judgementBasis);
+    feature.aiOpinion = {
+      status: TEST_CASE_STATUS_TO_VERDICT[validated.finalStatus] || null,
+      basis: validated.judgementBasis || '',
+      createdAt: new Date().toISOString(),
+    };
   }
 
   async function requestTestCaseDescription(feature) {
@@ -2384,7 +2584,10 @@
       await saveReport();
       renderFeatures();
       renderWarnings();
-      setMessage('테스트케이스 설명을 반영했습니다.');
+      const opinion = feature.aiOpinion && feature.aiOpinion.status;
+      setMessage(opinion
+        ? `비어 있던 칸을 AI 초안으로 채웠습니다. AI 의견은 ${opinion}이며, 판정은 직접 선택하세요.`
+        : '비어 있던 칸을 AI 초안으로 채웠습니다. 판정은 직접 선택하세요.');
       return validated;
     } catch (error) {
       setMessage(`테스트케이스 설명 생성 실패: ${error.message}`, true);
@@ -2707,7 +2910,27 @@
   elements.deleteReport.addEventListener('click', () => removeReport().catch((error) => setMessage(error.message, true)));
   elements.addFeature.addEventListener('click', () => addFeature().catch((error) => setMessage(error.message, true)));
   elements.toggleSession.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
-  elements.imageImport.addEventListener('change', () => importImages([...elements.imageImport.files]).catch((error) => setMessage(error.message, true)));
+  elements.imageImport.addEventListener('change', () => importImages([...elements.imageImport.files], 'file').catch((error) => setMessage(error.message, true)));
+  // 붙여넣기와 파일 끌어다 놓기는 작업대 전체에서 받는다(단계와 무관).
+  document.addEventListener('paste', handlePaste);
+  document.addEventListener('dragover', (event) => {
+    if (!draggedFiles(event)) return;
+    event.preventDefault();
+    document.body.classList.add('file-dragging');
+  });
+  document.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget === null) document.body.classList.remove('file-dragging');
+  });
+  document.addEventListener('drop', (event) => {
+    document.body.classList.remove('file-dragging');
+    if (!draggedFiles(event)) return;
+    event.preventDefault();
+    importImages([...event.dataTransfer.files], 'file').catch((error) => setMessage(error.message, true));
+  });
+  elements.cleanDuplicates.addEventListener('click', () => cleanDuplicateEvidence().catch((error) => setMessage(`중복 화면 정리 실패: ${error.message}`, true)));
+  for (const button of [elements.exportEvidenceQuick, elements.exportEvidenceCompletion]) {
+    button.addEventListener('click', () => exportEvidenceOnly().catch((error) => setMessage(`증적 ZIP 생성 실패: ${error.message}`, true)));
+  }
   elements.evidenceSearch.addEventListener('input', renderEvidence);
   window.addEventListener('resize', scheduleMappingLinks);
   for (const eventName of ['dragenter', 'dragover']) {
@@ -2716,7 +2939,6 @@
   for (const eventName of ['dragleave', 'drop']) {
     elements.evidenceDropZone.addEventListener(eventName, (event) => { event.preventDefault(); elements.evidenceDropZone.classList.remove('dragging'); });
   }
-  elements.evidenceDropZone.addEventListener('drop', (event) => importImages([...event.dataTransfer.files]).catch((error) => setMessage(error.message, true)));
   for (const eventName of ['dragenter', 'dragover']) {
     elements.mappedEvidence.addEventListener(eventName, (event) => {
       if (!draggedEvidenceIdsType(event)) return;

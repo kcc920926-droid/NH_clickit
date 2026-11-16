@@ -195,8 +195,8 @@ test('capture mode selection UI is removed from the default screen; a single rec
   assert.match(html, /중요한 영역은 Ctrl\+Shift\+클릭으로 직접 지정할 수 있습니다\./, 'manual pin should be a small supplementary hint');
   assert.doesNotMatch(html, /이벤트 모드는 클릭·제출·화면 전환을 완료 대기 없이 캡처합니다/);
 
-  // 녹화 중 상태에서는 RECORDING pill + 종료 CTA + 수집 현황 4개 숫자를 보여준다.
-  assert.match(html, /id=["']session-status["'][^>]*>RECORDING<\/span>/);
+  // 녹화 중 상태에서는 '녹화 중' pill + 종료 CTA + 수집 현황 4개 숫자를 보여준다.
+  assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
   assert.match(html, /id=["']recording-summary["'][^>]*hidden[^>]*>/);
   for (const id of ['recording-summary-screens', 'recording-summary-inputs', 'recording-summary-results', 'recording-summary-ai-ready']) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
@@ -552,17 +552,17 @@ test('editor.html no longer contains the literal ">OFF<"/">ON<" status markers n
   assert.equal(html.includes('>ON<'), false, '>ON< should not appear in editor.html');
 });
 
-test('renderSession() shows RECORDING pill and 녹화 시작/녹화 종료 CTA text rather than English ON/OFF or 자동캡쳐 wording', () => {
+test('renderSession() shows 녹화 중 pill and 녹화 시작/녹화 종료 CTA text rather than English ON/OFF or 자동캡쳐 wording', () => {
   const script = fs.readFileSync(path.resolve(__dirname, '../extension/editor.js'), 'utf8');
   const html = fs.readFileSync(editorPath, 'utf8');
 
-  assert.match(html, /id=["']session-status["'][^>]*>RECORDING<\/span>/);
+  assert.match(html, /id=["']session-status["'][^>]*>녹화 중<\/span>/);
   assert.match(html, /id=["']toggle-session["'][^>]*data-primary-action=["']recording-session["'][^>]*>녹화 시작<\/button>/);
 
   assert.match(
     script,
-    /elements\.sessionStatus\.textContent = active \? 'RECORDING' : starting \? '녹화 시작 중…' : '';/,
-    'renderSession should set the RECORDING pill text',
+    /elements\.sessionStatus\.textContent = active \? '녹화 중' : starting \? '녹화 시작 중…' : '';/,
+    'renderSession should set the 녹화 중 pill text',
   );
   assert.match(
     script,

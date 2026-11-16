@@ -12,12 +12,42 @@
       captureVisible,
       createId = () => crypto.randomUUID(),
       ensureRecordingLock = async () => true,
+      // 중복 화면 합치기: 둘 다 주입된 경우에만 동작한다(주입하지 않으면 기존 동작과 동일).
+      fingerprintImage = null,
+      loadEvidence = null,
       loadActiveRecordingSession = async () => null,
       loadSession,
       now = () => new Date().toISOString(),
       persistEvidence,
       saveSession,
     } = dependencies;
+    const dedupe = dependencies.dedupe
+      || root.CaptureITEvidenceDedupe
+      || (typeof require === 'function' ? require('./evidence-dedupe.js') : null);
+
+    // 방금 찍은 화면이 직전 증적과 거의 같으면 새 증적을 만들지 않고 직전 증적에 동작 기록만 합친다.
+    // 합쳤으면 직전 증적을, 아니면 null을 돌려준다. 실패해도 일반 저장으로 넘어간다.
+    async function mergeIntoPreviousIfDuplicate(session, request, imageDataUrl, fingerprint) {
+      if (!dedupe || !fingerprint || typeof loadEvidence !== 'function' || !session.lastEvidenceId) return null;
+      const policy = session.recordingPolicy || {};
+      if (policy.mergeDuplicateScreens === false) return null;
+      const previous = await loadEvidence(session.lastEvidenceId);
+      if (!previous || !previous.fingerprint) return null;
+      const candidate = {
+        sessionId: session.id,
+        triggerType: request.triggerType,
+        capturedAt: now(),
+        context: request.context || {},
+        domDiff: request.domDiff || null,
+        fingerprint,
+      };
+      const options = {};
+      if (policy.duplicateMaxChangedRatio !== undefined) options.maxChangedRatio = policy.duplicateMaxChangedRatio;
+      if (!dedupe.isNearDuplicate(previous, candidate, options)) return null;
+      dedupe.appendMergedEvents(previous, [candidate]);
+      await persistEvidence(previous);
+      return previous;
+    }
 
     function mapRequestContext(request) {
       const after = request.after || request.context || {};
@@ -38,9 +68,21 @@
       };
     }
 
-    async function createEvidenceForSession(session, request) {
+    async function createEvidenceForSession(session, request, { allowMerge = false } = {}) {
       session.lastSequenceNo += 1;
       const imageDataUrl = await captureVisible(request);
+      let fingerprint = null;
+      if (typeof fingerprintImage === 'function') {
+        fingerprint = await Promise.resolve(fingerprintImage(imageDataUrl)).catch(() => null);
+      }
+      if (allowMerge) {
+        const merged = await mergeIntoPreviousIfDuplicate(session, request, imageDataUrl, fingerprint).catch(() => null);
+        if (merged) {
+          // 합친 화면은 증적이 되지 않았으므로 순번을 쓰지 않는다.
+          session.lastSequenceNo -= 1;
+          return { ...merged, merged: true };
+        }
+      }
       const mapped = mapRequestContext(request);
       const evidence = {
         id: createId(),
@@ -68,6 +110,8 @@
         llmImageDataUrl: null,
         docImageDataUrl: null,
         imageMeta: {},
+        fingerprint,
+        mergedEvents: [],
         apiEvents: [],
         serverEvents: [],
         assertions: [],
@@ -81,7 +125,7 @@
     async function capture(request) {
       const session = await loadSession();
       if (!session || !session.active) throw new Error('Capture session is not active');
-      return createEvidenceForSession(session, request);
+      return createEvidenceForSession(session, request, { allowMerge: true });
     }
 
     async function startRecordingSession({ tabId, recordingPolicy = {}, captureBaselineContext = {} }) {

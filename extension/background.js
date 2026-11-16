@@ -1,5 +1,6 @@
 import './shared/domain.js';
 import './shared/storage.js';
+import './shared/evidence-dedupe.js';
 import './shared/capture-coordinator.js';
 import './shared/background-events.js';
 
@@ -108,6 +109,9 @@ function coordinatorFor(windowId, targetTabId, delay) {
     saveSession,
     persistEvidence,
     captureVisible: () => captureVisibleGuarded(windowId, targetTabId, delay),
+    // 중복 화면 합치기: 직전 증적과 거의 같은 화면이면 새 증적 대신 직전 증적에 합친다.
+    fingerprintImage: (dataUrl) => CaptureITEvidenceDedupe.fingerprintImageDataUrl(dataUrl),
+    loadEvidence: (id) => CaptureITStorage.getEvidence(id),
   });
 }
 
@@ -138,12 +142,13 @@ async function captureRequest(message, sender) {
     type: 'CAPTURE_RECEIPT',
     evidenceId: evidence.id,
     sequenceNo: evidence.sequenceNo,
-    triggerType: evidence.triggerType,
+    triggerType: message.triggerType || evidence.triggerType,
+    merged: Boolean(evidence.merged),
     contextSummary: contextSummary(message.context),
     pageTitle: message.context && message.context.pageTitle || '',
     targetText: message.context && message.context.target && message.context.target.visibleText || '',
   }).catch(() => {});
-  return { ok: true, evidenceId: evidence.id, sequenceNo: evidence.sequenceNo };
+  return { ok: true, evidenceId: evidence.id, sequenceNo: evidence.sequenceNo, merged: Boolean(evidence.merged) };
 }
 
 async function resolveRecordingTargetTabId(requestedTabId) {
@@ -176,7 +181,7 @@ async function startRecordingRequest(message, sender) {
   // (내부망 실사용에서 실제로 재현됨). tabId가 유효한 정수가 아니면 chrome.tabs.* 호출 자체를
   // 시도하지 않고, 원인을 알 수 있는 안내 메시지로 먼저 실패시킨다.
   if (!Number.isInteger(tabId)) {
-    throw new Error('녹화할 웹페이지 탭을 찾을 수 없습니다. 테스트할 화면 탭을 한 번 클릭해 활성화한 뒤 다시 시도하십시오.');
+    throw new Error('녹화할 웹페이지 탭을 찾을 수 없습니다. 테스트할 화면 탭을 한 번 클릭해 활성화한 뒤 다시 시도하십시오. 다른 브라우저나 IE 모드 화면이면 캡처(Win+Shift+S) 후 이 화면에 Ctrl+V 하세요.');
   }
   // Self_Capture_Guard(coordinatorFor의 targetTabId)에 실제 웹페이지 탭 id를 전달한다 - baseline
   // 캡처가 editor.html이 아니라 사용자가 테스트하려는 실제 탭을 찍도록 보장한다(REQ 1.1, 1.3).
@@ -193,7 +198,10 @@ async function startRecordingRequest(message, sender) {
     recordingPolicy: message.recordingPolicy || {},
     captureBaselineContext,
   });
-  return { ok: true, session: started };
+  // 콘텐츠 스크립트가 응답하지 않으면(IE 모드 탭 등) 클릭·화면 전환 자동 수집이 동작하지 않는다.
+  // 편집기가 붙여넣기 안내로 바꿀 수 있도록 알려준다.
+  const autoCaptureAvailable = Boolean(contextResponse && contextResponse.ok);
+  return { ok: true, session: started, autoCaptureAvailable };
 }
 
 async function stopRecordingRequest(message, sender) {

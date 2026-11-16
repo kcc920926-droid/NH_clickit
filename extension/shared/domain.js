@@ -259,7 +259,7 @@
 
   function validationWarnings(report) {
     const warnings = [];
-    if (!report.features.length) warnings.push({ code: 'NO_FEATURES', message: '기능 명세가 없습니다.' });
+    if (!report.features.length) warnings.push({ code: 'NO_FEATURES', message: '테스트케이스가 없습니다.' });
     for (const feature of report.features) {
       const { result } = feature;
       const add = (code, message) => warnings.push({ code, featureId: feature.id, message });
