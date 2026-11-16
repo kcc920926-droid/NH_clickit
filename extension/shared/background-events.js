@@ -38,40 +38,39 @@
       && url.startsWith(`chrome-extension://${extensionId}/`);
   }
 
-  // Self_Capture_Guard가 자기 캡처 상황을 감지했을 때의 처리 방침을 결정하는 순수 함수.
-  // targetTabId(의도된 캡처 대상 탭)가 있고 현재 활성 탭과 다르면 그 탭으로 전환한 뒤 캡처하도록
-  // 'activate-target'을, targetTabId를 모르면 캡처 자체를 건너뛰도록 'skip'을 반환한다.
-  function resolveSelfCaptureAction({ activeTabId, activeTabUrl, extensionId, targetTabId }) {
-    if (!isOwnExtensionUrl(activeTabUrl, extensionId)) return { action: 'capture' };
-    if (targetTabId && targetTabId !== activeTabId) return { action: 'activate-target', targetTabId };
-    return { action: 'skip' };
+  // 캡처 계획(순수 함수). chrome.tabs.captureVisibleTab(windowId)는 "그 창에서 지금 보이는 탭"을
+  // 찍으므로, 항상 대상 탭이 속한 창을 기준으로 판단한다(편집기 창을 기준으로 하면 대상 탭이 다른
+  // 창에 있을 때 편집기가 찍힌다).
+  //   - 대상 탭이 확장 자신의 페이지면 찍지 않는다(skip: self).
+  //   - 대상 탭이 그 창에서 보이는 탭이면 확인 후 찍는다.
+  //   - 보이지 않는데 activateTarget(녹화 시작 시 첫 화면)이면 그 탭으로 넘어가 그려질 때까지
+  //     기다린 뒤 찍는다. 편집기로 되돌아가지 않는다(사용자는 곧바로 테스트를 시작한다).
+  //   - 보이지 않고 activateTarget이 아니면 찍지 않는다(skip: hidden). 뒤에 있는 탭에서 생긴
+  //     이벤트로 지금 보이는 다른 탭이 찍히는 것을 막는다.
+  function planTabCapture({ targetTab, extensionId, activateTarget = false }) {
+    if (!targetTab || !Number.isInteger(targetTab.id)) return { action: 'skip', reason: 'no-target', steps: ['skip'] };
+    if (isOwnExtensionUrl(targetTab.url, extensionId)) return { action: 'skip', reason: 'self', steps: ['skip'] };
+    const base = { targetTabId: targetTab.id, windowId: targetTab.windowId };
+    if (targetTab.active) return { ...base, action: 'capture', steps: ['verify', 'capture'] };
+    if (activateTarget) return { ...base, action: 'activate', steps: ['activate', 'wait-paint', 'verify', 'capture'] };
+    return { action: 'skip', reason: 'hidden', steps: ['skip'] };
   }
 
-  // Self_Capture_Guard의 타이밍 문제 대응: chrome.tabs.update({active:true})로 탭을 전환한 직후
-  // 곧바로 chrome.tabs.captureVisibleTab을 호출하면, 브라우저가 새로 활성화된 탭을 아직 실제로
-  // 그리기(paint) 전이라 이전 탭(editor.html)의 화면이 그대로 캡처되는 레이스가 발생할 수 있다.
-  // 이 순수 함수는 resolveSelfCaptureAction의 판단 결과를 바탕으로, chrome.* API 호출 없이도
-  // "어떤 순서로 무엇을 해야 하는지"를 미리 계산해 반환한다. captureVisibleGuarded는 이 계획을
-  // 그대로 순서대로 실행하기만 하면 된다 - 시퀀싱 로직 자체는 이 함수에서 단위 테스트한다.
-  //   - 'capture' 액션이면: 곧바로 캡처(전환/대기/포커스 복원 불필요).
-  //   - 'activate-target' 액션이면: 대상 탭으로 전환 -> paint-settle 대기 -> 캡처 -> 원래 활성
-  //     탭으로 포커스 복원, 순서로 단계를 나열한다.
-  function planGuardedCaptureSteps(decision, activeTabId) {
-    if (decision.action === 'skip') return { steps: ['skip'] };
-    if (decision.action === 'activate-target') {
-      return {
-        steps: ['update', 'delay', 'capture', 'restore'],
-        targetTabId: decision.targetTabId,
-        restoreTabId: activeTabId,
-      };
-    }
-    return { steps: ['capture'] };
+  const SKIP_MESSAGES = {
+    'no-target': '캡처할 탭을 찾을 수 없어 건너뜁니다.',
+    self: 'CaptureIT 화면은 증적으로 찍지 않습니다.',
+    hidden: '대상 탭이 화면에 보이지 않아 캡처를 건너뜁니다.',
+    moved: '캡처 직전에 다른 탭이 열려 있어 건너뜁니다.',
+  };
+
+  function skipMessage(reason) {
+    return SKIP_MESSAGES[reason] || '캡처를 건너뜁니다.';
   }
 
   return {
     isOwnExtensionUrl,
-    planGuardedCaptureSteps,
-    resolveSelfCaptureAction,
+    planTabCapture,
     sendTabMessageWithRetry,
+    skipMessage,
   };
 });

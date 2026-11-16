@@ -71,7 +71,9 @@ test('background exposes recording session start and stop message handlers', () 
   assert.match(script, /STOP_RECORDING_SESSION/);
   assert.match(script, /startRecordingSession\(/);
   assert.match(script, /stopRecordingSession\(/);
-  assert.match(script, /recordingQueue/);
+  // 녹화 시작·종료와 캡처는 한 줄(workQueue)로 처리해 순번이 겹치지 않게 한다.
+  assert.match(script, /let workQueue = Promise\.resolve\(\)/);
+  assert.equal((script.match(/enqueue\(\(\) => (captureRequest|startRecordingRequest|stopRecordingRequest)\(/g) || []).length, 3);
 });
 
 // Self_Capture_Guard: CaptureIT가 녹화 시작 직후 자기 자신(editor.html)을 캡처하는 회귀를
@@ -97,87 +99,9 @@ test('isOwnExtensionUrl matches only URLs belonging to the given extension id', 
   assert.equal(backgroundEvents.isOwnExtensionUrl('chrome-extension://abc123/editor.html', ''), false);
 });
 
-test('resolveSelfCaptureAction allows capture when the active tab is not the extension itself', () => {
-  const decision = backgroundEvents.resolveSelfCaptureAction({
-    activeTabId: 7,
-    activeTabUrl: 'https://example.com/orders',
-    extensionId: 'abc123',
-    targetTabId: 7,
-  });
-  assert.deepEqual(decision, { action: 'capture' });
-});
-
-test('resolveSelfCaptureAction switches to the target tab when the extension page is active but a target tab is known', () => {
-  const decision = backgroundEvents.resolveSelfCaptureAction({
-    activeTabId: 1,
-    activeTabUrl: 'chrome-extension://abc123/editor.html',
-    extensionId: 'abc123',
-    targetTabId: 42,
-  });
-  assert.deepEqual(decision, { action: 'activate-target', targetTabId: 42 });
-});
-
-test('resolveSelfCaptureAction skips capture when the extension page is active and no target tab is known', () => {
-  const decision = backgroundEvents.resolveSelfCaptureAction({
-    activeTabId: 1,
-    activeTabUrl: 'chrome-extension://abc123/editor.html',
-    extensionId: 'abc123',
-    targetTabId: null,
-  });
-  assert.deepEqual(decision, { action: 'skip' });
-});
-
-test('resolveSelfCaptureAction does not switch tabs when the target tab is already active', () => {
-  const decision = backgroundEvents.resolveSelfCaptureAction({
-    activeTabId: 42,
-    activeTabUrl: 'chrome-extension://abc123/editor.html',
-    extensionId: 'abc123',
-    targetTabId: 42,
-  });
-  assert.deepEqual(decision, { action: 'skip' });
-});
-
 // Self_Capture_Guard 타이밍 버그(Bug 1): chrome.tabs.update({active:true}) 직후 곧바로
 // captureVisibleTab을 호출하면 아직 새 탭이 그려지기(paint) 전이라 이전 탭(editor.html)이 캡처될
-// 수 있다. planGuardedCaptureSteps는 이 순서(전환 -> 대기 -> 캡처 -> 포커스 복원)를 순수하게
 // 계산하는 헬퍼이며, captureVisibleGuarded는 이 계획을 그대로 실행하기만 한다.
-test('planGuardedCaptureSteps orders update, delay, capture, and restore when a switch is required', () => {
-  const plan = backgroundEvents.planGuardedCaptureSteps({ action: 'activate-target', targetTabId: 42 }, 1);
-  assert.deepEqual(plan.steps, ['update', 'delay', 'capture', 'restore']);
-  assert.equal(plan.targetTabId, 42);
-  assert.equal(plan.restoreTabId, 1);
-});
-
-test('planGuardedCaptureSteps skips update/delay/restore on the normal capture path (no switch needed)', () => {
-  const plan = backgroundEvents.planGuardedCaptureSteps({ action: 'capture' }, 7);
-  assert.deepEqual(plan.steps, ['capture']);
-  assert.equal(plan.targetTabId, undefined);
-  assert.equal(plan.restoreTabId, undefined);
-});
-
-test('planGuardedCaptureSteps reports skip when the guard refuses to capture', () => {
-  const plan = backgroundEvents.planGuardedCaptureSteps({ action: 'skip' }, 1);
-  assert.deepEqual(plan.steps, ['skip']);
-});
-
-test('captureVisibleGuarded awaits the delay between tab activation and capture, and restores focus only after a guarded switch', async () => {
-  const script = fs.readFileSync(path.resolve(__dirname, '../extension/background.js'), 'utf8');
-  const captureVisibleGuardedBody = extractCaptureVisibleGuardedBody(script);
-
-  assert.match(captureVisibleGuardedBody, /CaptureITBackgroundEvents\.planGuardedCaptureSteps\(/, 'captureVisibleGuarded should delegate sequencing to planGuardedCaptureSteps');
-  assert.match(captureVisibleGuardedBody, /plan\.steps\.includes\('delay'\)/, 'captureVisibleGuarded should await the delay step when planned');
-  assert.match(captureVisibleGuardedBody, /plan\.steps\.includes\('restore'\)/, 'captureVisibleGuarded should restore focus when planned');
-
-  const updateIndex = captureVisibleGuardedBody.indexOf("plan.steps.includes('update')");
-  const delayIndex = captureVisibleGuardedBody.indexOf("plan.steps.includes('delay')");
-  const captureIndex = captureVisibleGuardedBody.indexOf('chrome.tabs.captureVisibleTab(');
-  const restoreIndex = captureVisibleGuardedBody.indexOf("plan.steps.includes('restore')");
-  assert.ok(updateIndex !== -1 && delayIndex !== -1 && captureIndex !== -1 && restoreIndex !== -1);
-  assert.ok(updateIndex < delayIndex, 'tab activation should be sequenced before the paint-settle delay');
-  assert.ok(delayIndex < captureIndex, 'the paint-settle delay should be awaited before capturing');
-  assert.ok(captureIndex < restoreIndex, 'focus restoration should happen after capture completes');
-});
-
 // Bug_Duplicate_Capture(Bug 2): CAPTURE_NAVIGATION은 탐색 완료(메인 프레임 전용 개념)를 알리는
 // 신호이므로, all_frames:true인 content.js가 모든 iframe에서 각자 중복 처리하지 않도록
 // frameId: 0으로 명시해야 한다.
@@ -207,11 +131,11 @@ test('startRecordingRequest prefers the real tab context from COLLECT_PAGE_CONTE
   }
   const body = script.slice(match.index + match[0].length, index - 1);
 
-  assert.match(
-    body,
-    /chrome\.tabs\.sendMessage\(tabId,\s*\{\s*type:\s*'COLLECT_PAGE_CONTEXT'\s*\}\)\.catch\(\(\)\s*=>\s*null\)/,
-    'startRecordingRequest should query the real tab for its own page context and swallow failures',
-  );
+  assert.match(body, /const contextResponse = await collectPageContextWithInjection\(tabId\)/,
+    'startRecordingRequest should query the real tab for its own page context');
+  // 페이지 맥락은 최상위 프레임에서만 받고, 수집 스크립트가 없는 오래된 탭에는 넣어 준 뒤 다시 묻는다.
+  assert.match(script, /type: 'COLLECT_PAGE_CONTEXT' \}, \{ frameId: 0 \}\)\.catch\(\(\) => null\)/);
+  assert.match(script, /chrome\.scripting\.executeScript\(\{ target: \{ tabId, allFrames: true \}, files: files\.js \}\)/);
   assert.match(
     body,
     /const captureBaselineContext = \(contextResponse && contextResponse\.ok && contextResponse\.context\) \|\| message\.captureBaselineContext \|\| \{\}/,
@@ -246,7 +170,7 @@ test('startRecordingRequest는 유효한 tabId가 없으면 chrome.tabs.sendMess
   const guardMatch = /if\s*\(!Number\.isInteger\(tabId\)\)\s*\{\s*throw new Error\(/.exec(body);
   assert.ok(guardMatch, 'startRecordingRequest should guard against a non-integer tabId with an explicit throw');
 
-  const sendMessageIndex = body.indexOf("chrome.tabs.sendMessage(tabId, { type: 'COLLECT_PAGE_CONTEXT' })");
+  const sendMessageIndex = body.indexOf('collectPageContextWithInjection(tabId)');
   assert.ok(sendMessageIndex !== -1, 'COLLECT_PAGE_CONTEXT call should still exist');
   assert.ok(
     guardMatch.index < sendMessageIndex,
@@ -254,14 +178,58 @@ test('startRecordingRequest는 유효한 tabId가 없으면 chrome.tabs.sendMess
   );
 });
 
-test('background.js captures visible tab only through the self-capture guard, never calling chrome.tabs.captureVisibleTab directly elsewhere', () => {
+
+// 녹화 시작 직후 첫 화면이 편집기(자기 자신)로 찍히던 버그: 대상 탭이 아니라 편집기 창을 찍고,
+// 고정 120ms만 기다린 뒤 찍고, 찍은 뒤 편집기로 되돌아갔기 때문이다.
+test('planTabCapture는 대상 탭이 속한 창을 찍고, 보이는 탭이면 확인 후 바로 찍는다', () => {
+  const plan = backgroundEvents.planTabCapture({ targetTab: { id: 42, windowId: 7, active: true, url: 'https://app/x' }, extensionId: 'abc' });
+  assert.deepEqual(plan, { targetTabId: 42, windowId: 7, action: 'capture', steps: ['verify', 'capture'] });
+});
+
+test('planTabCapture는 녹화 시작 첫 화면이면 대상 탭으로 넘어가 그려질 때까지 기다리고 편집기로 되돌아가지 않는다', () => {
+  const plan = backgroundEvents.planTabCapture({ targetTab: { id: 42, windowId: 9, active: false, url: 'https://app/x' }, extensionId: 'abc', activateTarget: true });
+  assert.deepEqual(plan.steps, ['activate', 'wait-paint', 'verify', 'capture']);
+  assert.equal(plan.windowId, 9, '편집기 창이 아니라 대상 탭의 창을 찍는다');
+  assert.equal(plan.steps.includes('restore'), false);
+});
+
+test('planTabCapture는 뒤에 있는 탭의 이벤트로 다른 탭을 찍지 않고, 확장 자신의 페이지도 찍지 않는다', () => {
+  assert.equal(backgroundEvents.planTabCapture({ targetTab: { id: 42, windowId: 1, active: false, url: 'https://app/x' }, extensionId: 'abc' }).reason, 'hidden');
+  assert.equal(backgroundEvents.planTabCapture({ targetTab: { id: 5, windowId: 1, active: true, url: 'chrome-extension://abc/editor.html' }, extensionId: 'abc', activateTarget: true }).reason, 'self');
+  assert.equal(backgroundEvents.planTabCapture({ targetTab: null, extensionId: 'abc' }).reason, 'no-target');
+  assert.match(backgroundEvents.skipMessage('moved'), /다른 탭/);
+});
+
+test('captureVisibleGuarded는 계획대로 전환·그려짐 대기·직전 확인 후 대상 탭의 창을 찍는다', () => {
   const script = fs.readFileSync(path.resolve(__dirname, '../extension/background.js'), 'utf8');
+  const body = extractCaptureVisibleGuardedBody(script);
+  assert.match(body, /CaptureITBackgroundEvents\.planTabCapture\(/);
+  const order = ["plan.steps.includes('activate')", "plan.steps.includes('wait-paint')", "plan.steps.includes('verify')", 'captureWithRateLimit(plan.windowId)'];
+  const indexes = order.map((needle) => body.indexOf(needle));
+  assert.ok(indexes.every((index) => index !== -1), indexes.join(','));
+  assert.deepEqual([...indexes].sort((a, b) => a - b), indexes, '전환 → 그려짐 대기 → 확인 → 캡처 순서');
+  assert.doesNotMatch(body, /restore/, '찍은 뒤 편집기로 되돌아가지 않는다');
+  assert.match(script, /type: 'WAIT_FOR_PAINT'/);
+  assert.match(script, /coordinatorFor\(tabId, \{ activateTarget: true \}\)\.startRecordingSession/);
+  assert.match(script, /coordinatorFor\(sender\.tab\.id\)\.capture/);
+  assert.match(body, /setCaptureItUiVisible\(plan\.targetTabId, false\)/, '캡처하는 동안 CaptureIT 알림을 감춘다');
+  assert.match(script, /MIN_CAPTURE_INTERVAL_MS = 550/, '초당 2회 제한에 걸리지 않게 간격을 둔다');
+  assert.match(script, /function isSessionTab\(/, '녹화 중인 탭(과 그 탭이 연 창)만 수집한다');
+  assert.match(script, /chrome\.tabs\.onRemoved\.addListener/, '녹화 중인 탭을 닫으면 녹화를 끝낸다');
+  assert.match(script, /chrome\.runtime\.onStartup\.addListener/, '브라우저를 다시 켜면 이전 녹화를 끝낸다');
+  assert.equal([...script.matchAll(/chrome\.tabs\.captureVisibleTab\(/g)].length, 1, 'captureVisibleTab은 captureVisibleGuarded 안에서만 부른다');
+});
 
-  assert.match(script, /function\s+captureVisibleGuarded\s*\(/, 'captureVisibleGuarded helper should exist');
-  assert.match(script, /CaptureITBackgroundEvents\.resolveSelfCaptureAction\(/, 'captureVisibleGuarded should consult resolveSelfCaptureAction');
-  assert.match(script, /coordinatorFor\(sender\.tab\.windowId,\s*sender\.tab\.id\)/, 'captureRequest should pass the source tab id as the self-capture guard target');
-  assert.match(script, /function\s+resolveRecordingTargetTabId\s*\(/, 'startRecordingRequest should resolve the real web-page tab instead of trusting the caller-provided tabId blindly');
+test('마지막 웹페이지 탭은 서비스 워커가 재시작돼도 세션 저장소와 열린 창에서 다시 찾는다', () => {
+  const script = fs.readFileSync(path.resolve(__dirname, '../extension/background.js'), 'utf8');
+  assert.match(script, /chrome\.storage\.session\.set\(\{ \[LAST_WEB_TAB_KEY\]: tabId \}\)/);
+  assert.match(script, /chrome\.tabs\.query\(\{ active: true, windowType: 'normal' \}\)/);
+  assert.match(script, /function\s+resolveRecordingTargetTabId\s*\(/);
+});
 
-  const captureVisibleCalls = [...script.matchAll(/chrome\.tabs\.captureVisibleTab\(/g)];
-  assert.equal(captureVisibleCalls.length, 1, 'chrome.tabs.captureVisibleTab should only be called once, inside captureVisibleGuarded');
+test('콘텐츠 스크립트는 그려짐 신호에 응답하고, 캡처하는 동안 직전 수집 알림을 감춘다', () => {
+  const content = fs.readFileSync(path.resolve(__dirname, '../extension/content.js'), 'utf8');
+  assert.match(content, /message\.type === 'WAIT_FOR_PAINT'/);
+  assert.match(content, /function waitForVisiblePaint\(/);
+  assert.match(content, /toast\.style\.visibility = 'hidden'/);
 });

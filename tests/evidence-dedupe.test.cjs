@@ -67,8 +67,19 @@ test('isNearDuplicate는 직접 지정·입력·결과 메시지·연결된 증�
     assert.equal(dedupe.isNearDuplicate(previous, evidence({ id: 'E2', triggerType })), false, triggerType);
   }
   assert.equal(
-    dedupe.isNearDuplicate(previous, evidence({ id: 'E2', domDiff: { resultMessages: [{ text: '저장되었습니다' }] } })),
+    dedupe.isNearDuplicate(previous, evidence({ id: 'E2', domDiff: { resultMessages: [{ text: '저장되었습니다', priority: 4 }] } })),
     false,
+    '알림창(role=alert 등)에 뜬 결과 메시지가 있으면 합치지 않는다',
+  );
+  assert.equal(
+    dedupe.isNearDuplicate(previous, evidence({ id: 'E2', domDiff: { resultMessages: [{ text: '저장 완료 버튼 …', priority: 1 }] } })),
+    true,
+    '페이지 본문에서 찾은 단어(버튼 이름 등)만으로는 보호하지 않는다',
+  );
+  assert.equal(
+    dedupe.isNearDuplicate(previous, evidence({ id: 'E2', domDiff: { changedText: ['3건'] } })),
+    false,
+    '동작 뒤 화면 글자가 바뀌었으면 그림이 비슷해도 합치지 않는다',
   );
   assert.equal(dedupe.isNearDuplicate(evidence({ id: 'E1', featureSpecId: 'F1' }), evidence({ id: 'E2' })), false);
 });

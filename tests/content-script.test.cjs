@@ -38,10 +38,14 @@ test('content script routes click and route-change through settling and DOM diff
 test('content script exposes baseline capture and keeps manual pin branch independent', () => {
   const script = source();
 
-  assert.match(script, /let manualPinInProgress = false/);
-  assert.match(script, /manualPinInProgress = true/);
-  assert.match(script, /manualPinInProgress = false/);
-  assert.doesNotMatch(script, /if\s*\(\s*manualPinInProgress\s*\)\s*return/);
+  // Ctrl+Shift+클릭은 녹화 중일 때만 가로채고, 캡처가 실패해도 원래 클릭을 Ctrl·Shift 없이 다시 실행한다.
+  assert.match(script, /if \(pathName === 'manual-pin' && recordingActive\)/);
+  assert.match(script, /ctrlKey: false,\s*\n\s*shiftKey: false,/);
+  assert.match(script, /\.finally\(\(\) => \{\s*\n\s*if \(!target\.isConnected\) return;\s*\n\s*const replayEvent = new MouseEvent\('click', replayProps\)/);
+  // 녹화 중이 아니면 클릭마다 무거운 맥락 수집을 하지 않는다.
+  assert.match(script, /if \(stateLoaded && !recordingActive\) return;\s*\n\s*const pathName/);
+  // CaptureIT 알림을 클릭한 것은 증적이 아니다.
+  assert.match(script, /if \(isCaptureItNode\(event\.target\)\) return;/);
   assert.match(script, /CAPTURE_BASELINE/);
   assert.match(script, /controller\.captureBaseline/);
 });

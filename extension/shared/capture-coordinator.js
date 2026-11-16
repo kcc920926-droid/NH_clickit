@@ -87,6 +87,7 @@
       const evidence = {
         id: createId(),
         sessionId: session.id,
+        reportId: session.reportId || null,
         sequenceNo: session.lastSequenceNo,
         capturedAt: now(),
         triggerType: request.triggerType,
@@ -128,7 +129,7 @@
       return createEvidenceForSession(session, request, { allowMerge: true });
     }
 
-    async function startRecordingSession({ tabId, recordingPolicy = {}, captureBaselineContext = {} }) {
+    async function startRecordingSession({ tabId, recordingPolicy = {}, captureBaselineContext = {}, reportId = null }) {
       const locked = await ensureRecordingLock(tabId);
       if (!locked) {
         return loadActiveRecordingSession(tabId);
@@ -137,6 +138,7 @@
       const session = domain.createRecordingSession(recordingPolicy, now(), createId());
       session.active = true;
       session.tabId = tabId;
+      session.reportId = reportId;
       await saveSession(session);
 
       if (session.recordingPolicy.captureBaselineOnStart !== false) {

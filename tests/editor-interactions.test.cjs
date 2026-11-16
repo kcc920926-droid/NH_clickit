@@ -59,17 +59,19 @@ test('Drag_And_Drop_Mapping과 Alternative_Mapping_Control은 동일한 도메�
     'mapEvidenceIds는 CaptureITDomain.mapEvidenceBatch를 호출해야 한다',
   );
 
+  // 둘 다 다른 테스트케이스에 연결된 사진을 옮길지 묻는 mapEvidenceIdsWithConfirm을 거쳐 mapEvidenceIds로 간다.
+  assert.match(extractFunctionBody(source, 'mapEvidenceIdsWithConfirm'), /await mapEvidenceIds\(targetIds, feature\)/);
   const dropBody = extractFunctionBody(source, 'dropEvidenceIdsOnFeature');
   assert.match(
     dropBody,
-    /\bmapEvidenceIds\(/,
+    /\bmapEvidenceIdsWithConfirm\(/,
     'Drag_And_Drop_Mapping 핸들러(dropEvidenceIdsOnFeature)는 mapEvidenceIds를 호출해야 한다',
   );
 
   const mapToFeatureButtonBody = extractFunctionBody(source, 'mapToFeatureButton');
   assert.match(
     mapToFeatureButtonBody,
-    /\bmapEvidenceIds\(/,
+    /\bmapEvidenceIdsWithConfirm\(/,
     'Alternative_Mapping_Control 버튼 핸들러(mapToFeatureButton)는 mapEvidenceIds를 호출해야 한다',
   );
 });
@@ -162,10 +164,13 @@ test('ensureLlmImage/ensureDocImage는 screenshot-cropper wrapper에 위임하�
   const ensureLlmBody = extractFunctionBody(source, 'ensureLlmImage');
   const ensureDocBody = extractFunctionBody(source, 'ensureDocImage');
 
-  assert.match(ensureLlmBody, /CaptureITScreenshotCropper\.ensureLlmImage\(evidence,\s*cropOptionsForEvidence\(evidence\)\)/);
-  assert.match(ensureDocBody, /CaptureITScreenshotCropper\.ensureDocImage\(evidence,\s*cropOptionsForEvidence\(evidence\)\)/);
-  assert.match(ensureLlmBody, /CaptureITStorage\.putEvidence\(evidence\)/);
-  assert.match(ensureDocBody, /CaptureITStorage\.putEvidence\(evidence\)/);
+  // 같은 증적의 자르기는 한 번만 돌고(cropOnce), 자른 결과를 저장한다.
+  assert.match(ensureLlmBody, /cropOnce\(evidence, 'llm', CaptureITScreenshotCropper\.ensureLlmImage\)/);
+  assert.match(ensureDocBody, /cropOnce\(evidence, 'doc', CaptureITScreenshotCropper\.ensureDocImage\)/);
+  const cropOnceBody = extractFunctionBody(source, 'cropOnce');
+  assert.match(cropOnceBody, /await run\(evidence, cropOptionsForEvidence\(evidence\)\)/);
+  assert.match(cropOnceBody, /CaptureITStorage\.putEvidence\(evidence\)/);
+  assert.match(cropOnceBody, /cropsInFlight\.has\(key\)/);
 });
 
 test('requestTestCaseDescription은 EvidenceStep/LLM packet을 구성하고 검증된 응답만 반영한다', () => {
@@ -255,7 +260,7 @@ test('evidenceCard, captureNode, renderRecentEvidence, renderEvidenceDetail은 d
 
 test('swapToCroppedThumbnailWhenReady는 이미 크롭된 이미지가 있으면 스킵하고, 실패해도 조용히 무시한다', () => {
   const body = extractFunctionBody(source, 'swapToCroppedThumbnailWhenReady');
-  assert.match(body, /if\s*\(evidence\.docImageDataUrl\)\s*return;/, '이미 docImageDataUrl이 있으면 크롭을 다시 요청하지 않아야 한다');
+  assert.match(body, /if\s*\(usableImage\(evidence\.docImageDataUrl\)\)\s*return;/, '쓸 수 있는 docImageDataUrl이 있으면 크롭을 다시 요청하지 않아야 한다(빈 "data:," 는 다시 만든다)');
   assert.match(body, /ensureDocImage\(evidence\)/, '기존 ensureDocImage 헬퍼를 재사용해야 한다');
   assert.match(body, /\.catch\(\(\)\s*=>\s*{}\)/, '크롭 실패는 사용자에게 노출하지 않고 조용히 무시해야 한다');
 });
@@ -266,7 +271,7 @@ test('captureGraphCard는 세트 연결 해제/삭제 버튼을 헤더 액션 �
   assert.match(source, /async function unmapEvidenceGroup\(evidenceIds\)/, 'unmapEvidenceGroup 함수가 있어야 한다');
 
   const removeEvidenceGroupBody = extractFunctionBody(source, 'removeEvidenceGroup');
-  assert.match(removeEvidenceGroupBody, /confirm\(`이 증적 세트\(\$\{evidenceIds\.length\}개\)를 삭제하시겠습니까/, '세트 개수를 포함한 확인 문구를 사용해야 한다');
+  assert.match(removeEvidenceGroupBody, /confirm\(`이 증적 세트의 사진 \$\{evidenceIds\.length\}장을 모두 삭제할까요/, '세트 개수를 포함한 확인 문구를 사용해야 한다');
   assert.match(removeEvidenceGroupBody, /CaptureITStorage\.deleteEvidence\(id\)/, '그룹의 모든 evidence를 스토리지에서 삭제해야 한다');
   assert.match(removeEvidenceGroupBody, /await saveReport\(\)/);
 
@@ -456,10 +461,11 @@ test('runAutoAiPipeline은 증적 설명 생성 후 테스트케이스 설명 �
   const descriptionIndex = body.indexOf('await requestTestCaseDescription(feature)');
   assert.ok(recoIndex !== -1 && descriptionIndex !== -1 && recoIndex < descriptionIndex, '증적 설명 생성이 테스트케이스 설명 자동 생성보다 먼저 실행되어야 한다');
   assert.match(body, /startAiPipeline\(feature\.id\)/, '파이프라인 시작 시 진행 상태를 초기화해야 한다');
-  assert.match(body, /setAiPipelineStepStatus\('recommendations',\s*'done'\)/);
-  assert.match(body, /setAiPipelineStepStatus\('recommendations',\s*'error'\)/, '1단계 실패도 잡아서 에러 상태로 표시해야 한다');
-  assert.match(body, /setAiPipelineStepStatus\('description',\s*'active'\)/, '1단계 실패 여부와 무관하게 2단계는 시도해야 한다');
-  assert.match(body, /finishAiPipeline\(\)/);
+  // 진행 상태는 테스트케이스별로 둔다(동시에 두 매핑이 돌아도 섞이지 않게).
+  assert.match(body, /setAiPipelineStepStatus\(feature\.id,\s*'recommendations',\s*'done'\)/);
+  assert.match(body, /setAiPipelineStepStatus\(feature\.id,\s*'recommendations',\s*'error'\)/, '1단계 실패도 잡아서 에러 상태로 표시해야 한다');
+  assert.match(body, /setAiPipelineStepStatus\(feature\.id,\s*'description',\s*'active'\)/, '1단계 실패 여부와 무관하게 2단계는 시도해야 한다');
+  assert.match(body, /finishAiPipeline\(feature\.id\)/);
 });
 
 test('autoRunAiPipelineForFeature는 실패해도 매핑 흐름을 막지 않는다', () => {
@@ -467,9 +473,9 @@ test('autoRunAiPipelineForFeature는 실패해도 매핑 흐름을 막지 않는
   assert.match(body, /runAutoAiPipeline\(feature\)\.catch\(/, 'runAutoAiPipeline 호출은 await되지 않고 catch로만 처리되어야 한다');
 });
 
-test('featureCard는 aiPipelineStatus가 해당 feature를 가리킬 때 ai-generating 클래스와 진행 체크리스트를 렌더링한다', () => {
+test('featureCard는 이 테스트케이스의 AI 진행 상태가 있을 때 ai-generating 클래스와 진행 체크리스트를 렌더링한다', () => {
   const body = extractFunctionBody(source, 'featureCard');
-  assert.match(body, /aiPipelineStatus\s*&&\s*aiPipelineStatus\.featureId === feature\.id/, '이 feature에 대한 파이프라인 상태만 골라내야 한다');
+  assert.match(body, /aiPipelines\.get\(feature\.id\)/, '이 feature에 대한 파이프라인 상태만 골라내야 한다');
   assert.match(body, /ai-generating/, '진행 중일 때 카드에 ai-generating 클래스를 붙여야 한다');
   assert.match(body, /ai-pipeline-checklist/, '진행 체크리스트 목록을 렌더링해야 한다');
 });
@@ -506,10 +512,12 @@ test('evidenceCard의 이미지는 클릭 시 showEvidenceDetail로 원본 확�
   );
 });
 
-// Unclear_Unlink_Button_Removed: "연결 해제" 버튼은 역할이 모호해서 mapped-evidence 카드에서
-// 제거되었다(순서 이동/삭제만 남김).
-test('mapped-evidence 카드에는 더 이상 연결 해제 버튼이 없다', () => {
+// 사진 하나의 연결만 끊는 방법이 없어 "삭제"로 사진 자체를 지우는 일이 생겼다. 연결 해제와 사진 삭제를
+// 이름으로 분명히 나눠 둘 다 둔다.
+test('연결된 증적 카드는 연결 해제(사진 유지)와 사진 삭제를 구분해 제공한다', () => {
   const body = extractFunctionBody(source, 'evidenceCard');
-  assert.doesNotMatch(body, /button\('연결 해제'/, '연결 해제 버튼은 제거되어야 한다');
-  assert.doesNotMatch(body, /unmapEvidence\(evidence\)/, 'evidenceCard는 더 이상 unmapEvidence를 호출하지 않아야 한다');
+  assert.match(body, /button\('연결 해제', \(\) => unmapSingleEvidence\(evidence\.id\)/);
+  assert.match(body, /button\('사진 삭제', \(\) => removeEvidence\(evidence\.id\)\)/);
+  assert.match(extractFunctionBody(source, 'unmapSingleEvidence'), /CaptureITDomain\.unmapEvidence\(editorState, evidenceId\)/);
+  assert.match(extractFunctionBody(source, 'removeEvidence'), /if \(!confirm\('[^']*연결 해제/, '삭제 확인 문구에 연결 해제 안내가 있어야 한다');
 });

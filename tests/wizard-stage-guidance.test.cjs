@@ -39,15 +39,16 @@ const renderFeatureBody = extractFunctionBody(source, 'renderFeature');
 // Requirement 1.5: 빈 Evidence Inbox + 비활성 세션 조합에서 Capture_Stage의 Primary_Action 안내
 // 문구("캡처를 시작하거나 이미지를 불러오세요.")가 나타나야 한다.
 test('Requirement 1.5 - session이 비활성 상태면 renderGuidance는 Capture_Stage 시작 안내 문구를 push한다', () => {
+  assert.match(renderGuidanceBody, /const recording = Boolean\(session && session\.active\);/);
   const ifElseMatch = renderGuidanceBody.match(
-    /if\s*\(\s*session\s*&&\s*session\.active\s*\)\s*{([\s\S]*?)}\s*else\s*{([\s\S]*?)}/,
+    /if \(recording\) (messages\.push\('[^']*'\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
   );
-  assert.ok(ifElseMatch, 'session && session.active 조건의 if/else 블록이 있어야 한다');
+  assert.ok(ifElseMatch, '녹화 중/아님에 따라 다른 안내를 push해야 한다');
 
-  // 비활성 세션 분기(빈 Evidence Inbox 상태를 포함)에서 Capture_Stage 시작 안내가 나와야 한다.
+  // 녹화 중이 아니고 증적이 없으면(빈 Evidence Inbox) Capture_Stage 시작 안내가 나와야 한다.
   assert.match(
     ifElseMatch[2],
-    /messages\.push\('캡처를 시작하거나 이미지를 불러오세요\.'\)/,
+    /messages\.push\('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요\(Ctrl\+V\)\.'\)/,
     '세션이 비활성 상태면 "캡처를 시작하거나 이미지를 불러오세요." 문구를 push해야 한다(Requirement 1.5)',
   );
 
@@ -69,7 +70,7 @@ test('Requirement 1.6 - 매핑되지 않은 Test_Result_Set을 가진 검증 항
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'이 테스트케이스에 Capture_Graph나 Evidence를 드래그하거나 매핑 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
     '매핑된 증적(Test_Result_Set)이 없으면 매핑 유도 문구를 textContent에 설정해야 한다(Requirement 1.6)',
   );
 
@@ -92,7 +93,7 @@ test('Requirement 3.5 - 첫 매핑 전/후로 featureMappingGuidance 문구가 �
   // 매핑 전(evidenceIds.length === 0) 분기
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'이 테스트케이스에 Capture_Graph나 Evidence를 드래그하거나 매핑 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
     '매핑 전에는 매핑 유도 문구를 설정해야 한다',
   );
   // 매핑 후(evidenceIds.length > 0, 즉 첫 매핑 직후) 분기

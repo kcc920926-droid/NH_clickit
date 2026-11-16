@@ -38,19 +38,21 @@ const renderFeatureBody = extractFunctionBody(source, 'renderFeature');
 // Task 18.2 - 8.6/8.1: 캡처 세션 활성 여부에 따른 안내 문구
 // _Requirements: 8.1, 8.6_
 test('renderGuidance는 session.active 여부에 따라 서로 다른 안내 문구를 if/else로 push한다', () => {
+  // 안내는 단계(activeStageIndex)와 녹화 여부에 따라 고른다.
+  assert.match(renderGuidanceBody, /const recording = Boolean\(session && session\.active\);/);
   const ifElseMatch = renderGuidanceBody.match(
-    /if\s*\(\s*session\s*&&\s*session\.active\s*\)\s*{([\s\S]*?)}\s*else\s*{([\s\S]*?)}/,
+    /if \(recording\) (messages\.push\('[^']*'\);)\s*\n\s*else if \(evidenceCount === 0\) (messages\.push\('[^']*'\);)/,
   );
-  assert.ok(ifElseMatch, "session && session.active 조건의 if/else 블록이 있어야 한다");
+  assert.ok(ifElseMatch, '녹화 중/아님에 따라 다른 안내를 push해야 한다');
 
   assert.match(
     ifElseMatch[1],
-    /messages\.push\('캡처 세션이 진행 중입니다\.'\)/,
+    /messages\.push\('녹화 중입니다\./,
     '세션이 활성 상태면 "캡처 세션이 진행 중입니다." 문구를 push해야 한다',
   );
   assert.match(
     ifElseMatch[2],
-    /messages\.push\('캡처를 시작하거나 이미지를 불러오세요\.'\)/,
+    /messages\.push\('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요\(Ctrl\+V\)\.'\)/,
     '세션이 비활성 상태면 "캡처를 시작하거나 이미지를 불러오세요." 문구를 push해야 한다',
   );
 });
@@ -58,14 +60,11 @@ test('renderGuidance는 session.active 여부에 따라 서로 다른 안내 문
 // Task 18.2 - 8.5: Feature_Spec이 하나도 없을 때 안내
 // _Requirements: 8.5_
 test('renderGuidance는 editorState.features.length === 0일 때 기능 명세 추가 안내를 push한다', () => {
-  const match = renderGuidanceBody.match(
-    /if\s*\(\s*editorState\.features\.length\s*===\s*0\s*\)\s*{([\s\S]*?)}/,
-  );
-  assert.ok(match, 'editorState.features.length === 0 조건 블록이 있어야 한다');
+  assert.match(renderGuidanceBody, /const featureCount = editorState\.features\.length;/);
   assert.match(
-    match[1],
-    /messages\.push\('테스트케이스를 추가한 뒤 증적을 연결하세요\.'\)/,
-    '테스트케이스가 없으면 "테스트케이스를 추가한 뒤 증적을 연결하세요." 문구를 push해야 한다',
+    renderGuidanceBody,
+    /else if \(featureCount === 0\) messages\.push\('증적 세트의 🔗 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다\./,
+    '테스트케이스가 없으면 🔗 버튼으로 바로 만들어 연결할 수 있다고 안내해야 한다',
   );
 });
 
@@ -132,7 +131,7 @@ test('renderFeature는 evidenceIds 매핑 여부에 따라 서로 다른 feature
 
   assert.match(
     ifElseMatch[1],
-    /elements\.featureMappingGuidance\.textContent\s*=\s*'이 테스트케이스에 Capture_Graph나 Evidence를 드래그하거나 매핑 버튼을 누르세요\.'/,
+    /elements\.featureMappingGuidance\.textContent\s*=\s*'증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요\.'/,
     '매핑된 증적이 없으면 매핑 유도 문구를 textContent에 설정해야 한다',
   );
   assert.match(

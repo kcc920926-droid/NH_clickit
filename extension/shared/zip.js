@@ -118,7 +118,9 @@
       const uncompressedSize = view.getUint32(offset + 22, true);
       const nameLength = view.getUint16(offset + 26, true);
       const extraLength = view.getUint16(offset + 28, true);
-      if (method !== 0 || compressedSize !== uncompressedSize) throw new Error('Unsupported ZIP compression method');
+      if (method !== 0 || compressedSize !== uncompressedSize) {
+        throw new Error('압축 방식이 다른 ZIP입니다(압축을 풀었다가 다시 묶은 파일 등). CaptureIT에서 만든 원래 ZIP을 그대로 여세요.');
+      }
       const nameStart = offset + 30;
       const dataStart = nameStart + nameLength + extraLength;
       const dataEnd = dataStart + compressedSize;

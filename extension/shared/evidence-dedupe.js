@@ -86,9 +86,18 @@
     return url.split('#')[0];
   }
 
+  // 결과 메시지는 알림창(role=alert/status, aria-live, toast·modal·dialog)에 뜬 것만 인정한다.
+  // 페이지 본문 전체에서 "저장"·"완료" 같은 단어를 찾으면 버튼 이름에도 걸려 거의 모든 화면이 보호됐다.
   function hasMessages(evidence) {
     const diff = evidence && (evidence.domDiff || evidence.domAfter) || {};
-    return (diff.resultMessages || []).length > 0 || (diff.validationMessages || []).length > 0;
+    const messages = [...(diff.resultMessages || []), ...(diff.validationMessages || [])];
+    return messages.some((message) => Number(message && message.priority) >= 2);
+  }
+
+  // 동작 뒤 화면 글자가 바뀌었으면(입력값 반영, 오류 문구 등) 그림이 비슷해도 합치지 않는다.
+  function hasTextChange(evidence) {
+    const diff = evidence && evidence.domDiff || {};
+    return Array.isArray(diff.changedText) && diff.changedText.length > 0;
   }
 
   function isProtected(evidence) {
@@ -105,6 +114,7 @@
     if (!previous || !candidate) return false;
     if (previous.sessionId && candidate.sessionId && previous.sessionId !== candidate.sessionId) return false;
     if (isProtected(candidate)) return false;
+    if (hasTextChange(candidate)) return false;
     if (previous.featureSpecId) return false;
     if (pageKeyOf(previous) !== pageKeyOf(candidate)) return false;
     return changedRatio(previous.fingerprint, candidate.fingerprint, settings.pixelTolerance) <= settings.maxChangedRatio;

@@ -7,8 +7,15 @@ import './shared/background-events.js';
 const MENU_ID = 'captureit-context-capture';
 const SESSION_KEY = 'captureSession';
 
-let captureQueue = Promise.resolve();
-let recordingQueue = Promise.resolve();
+// 녹화 시작·종료와 캡처를 한 줄로 처리한다. 따로 돌면 첫 화면(baseline)을 기다리는 동안 들어온 클릭이
+// 같은 순번을 받고, 이전·다음 연결이 꼬였다.
+let workQueue = Promise.resolve();
+
+function enqueue(task) {
+  const run = workQueue.then(task);
+  workQueue = run.catch(() => {});
+  return run;
+}
 
 // Self_Capture_Guard의 근본 원인 대응: editor.html에서 "녹화 시작"을 클릭하는 시점에는
 // editor.html 자신이 항상 그 창의 활성 탭이므로, chrome.tabs.query({active:true})로는 사용자가
@@ -21,14 +28,38 @@ function isHttpUrl(url) {
   return typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'));
 }
 
+// MV3 서비스 워커는 수십 초 쉬면 종료되어 전역 변수가 사라진다. 그러면 "녹화할 웹페이지 탭을 찾을 수
+// 없습니다"가 났으므로 chrome.storage.session에도 남긴다(브라우저를 닫으면 지워지는 저장소).
+const LAST_WEB_TAB_KEY = 'lastActiveWebTabId';
+
 async function trackTabIfWebPage(tabId) {
   if (!Number.isInteger(tabId)) return;
   try {
     const tab = await chrome.tabs.get(tabId);
-    if (isHttpUrl(tab.url)) lastActiveWebTabId = tabId;
+    if (!isHttpUrl(tab.url)) return;
+    lastActiveWebTabId = tabId;
+    if (chrome.storage.session) await chrome.storage.session.set({ [LAST_WEB_TAB_KEY]: tabId });
   } catch {
     // 탭이 이미 닫혔거나 접근할 수 없는 경우 조용히 무시한다(추적 갱신을 건너뜀).
   }
+}
+
+async function isUsableWebTab(tabId) {
+  if (!Number.isInteger(tabId)) return false;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  return Boolean(tab && isHttpUrl(tab.url));
+}
+
+// 마지막으로 본 웹페이지 탭: 메모리 → 세션 저장소 → 지금 열린 창들의 보이는 웹페이지 탭 순으로 찾는다.
+async function lastWebTabId() {
+  if (await isUsableWebTab(lastActiveWebTabId)) return lastActiveWebTabId;
+  if (chrome.storage.session) {
+    const stored = (await chrome.storage.session.get(LAST_WEB_TAB_KEY))[LAST_WEB_TAB_KEY];
+    if (await isUsableWebTab(stored)) return stored;
+  }
+  const visible = await chrome.tabs.query({ active: true, windowType: 'normal' }).catch(() => []);
+  const candidate = visible.find((tab) => isHttpUrl(tab.url));
+  return candidate ? candidate.id : null;
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => { trackTabIfWebPage(tabId); });
@@ -59,56 +90,81 @@ async function persistEvidence(evidence) {
   await CaptureITStorage.putEvidence(evidence);
 }
 
-// Self_Capture_Guard 타이밍 대응: chrome.tabs.update({active:true})가 반환된 시점에도 브라우저가
-// 새로 활성화된 탭을 실제로 다시 그리기(paint) 전일 수 있어, 곧바로 captureVisibleTab을 호출하면
-// 여전히 이전(editor.html) 탭의 화면이 캡처되는 레이스가 남는다. 이 기본 대기 함수는 그 사이에
-// 짧게 쉬어(paint-settle) 이 레이스를 완화한다. 테스트에서는 실제 setTimeout 없이 순서만
-// 검증하도록 이 의존성을 주입해서 대체할 수 있다.
-function defaultPaintSettleDelay() {
-  return new Promise((resolve) => setTimeout(resolve, 120));
+// 녹화 시작 시 대상 탭으로 넘어간 뒤 "실제로 보이고 그려졌다"는 신호를 콘텐츠 스크립트에서 받는다.
+// 고정 시간(예전 120ms)만 기다리면 무거운 화면에서는 아직 편집기 화면이 남아 있어 그대로 찍혔다.
+// 콘텐츠 스크립트가 없는 탭(IE 모드 등)은 응답이 없으므로 짧게 기다린 뒤 진행한다.
+const PAINT_WAIT_TIMEOUT_MS = 2000;
+const PAINT_FALLBACK_DELAY_MS = 500;
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-// Self_Capture_Guard: 실제로 chrome.tabs.captureVisibleTab을 호출하기 직전에 그 창의 현재
-// 활성 탭이 CaptureIT 자신의 확장 페이지(editor.html/viewer.html)인지 확인한다. 그런 경우라면
-// targetTabId(캡처를 요청한 콘텐츠 스크립트가 속한 실제 탭)로 전환한 뒤 캡처하거나, 전환할 수
-// 없으면 캡처를 건너뛰어 "녹화 시작을 누르자마자 editor.html이 캡처되는" 문제를 막는다.
-// 순서/타이밍 결정은 CaptureITBackgroundEvents.planGuardedCaptureSteps(순수 함수)에 위임하고,
-// 이 함수는 그 계획을 그대로 chrome.* API 호출로 옮기는 역할만 한다:
-//   전환(update) -> paint-settle 대기(delay) -> 캡처(capture) -> 원래 탭으로 포커스 복원(restore).
-// 복원은 실제로 탭을 전환한 경우('activate-target')에만 수행하고, 원래부터 대상 탭이 활성 탭이었던
-// 정상 캡처 경로('capture')에서는 아무 것도 하지 않는다(사용자를 임의로 다른 탭으로 옮기지 않음).
-async function captureVisibleGuarded(windowId, targetTabId, delay = defaultPaintSettleDelay) {
-  const activeTabs = await chrome.tabs.query({ windowId, active: true });
-  const activeTab = activeTabs && activeTabs[0];
-  const decision = CaptureITBackgroundEvents.resolveSelfCaptureAction({
-    activeTabId: activeTab && activeTab.id,
-    activeTabUrl: activeTab && activeTab.url,
-    extensionId: chrome.runtime.id,
-    targetTabId,
-  });
-  const plan = CaptureITBackgroundEvents.planGuardedCaptureSteps(decision, activeTab && activeTab.id);
-  if (plan.steps[0] === 'skip') throw new Error('Self-capture guard: refusing to capture the extension\'s own page');
+async function waitForTabPaint(tabId) {
+  const painted = chrome.tabs.sendMessage(tabId, { type: 'WAIT_FOR_PAINT', timeoutMs: PAINT_WAIT_TIMEOUT_MS }, { frameId: 0 })
+    .then((response) => Boolean(response && response.ok))
+    .catch(() => false);
+  const timedOut = sleep(PAINT_WAIT_TIMEOUT_MS + 300).then(() => false);
+  if (!await Promise.race([painted, timedOut])) await sleep(PAINT_FALLBACK_DELAY_MS);
+}
 
-  if (plan.steps.includes('update')) {
+// 모든 화면 캡처는 이 함수 하나를 거친다. 순서 결정은 CaptureITBackgroundEvents.planTabCapture(순수 함수)에 맡긴다.
+//   activate(필요할 때만) -> wait-paint -> verify(그 창에서 보이는 탭이 대상 탭인지) -> capture
+// 대상 탭이 속한 창을 찍고, 찍기 직전에 보이는 탭이 대상과 다르면 저장하지 않고 건너뛴다.
+async function captureVisibleGuarded(targetTabId, { activateTarget = false } = {}) {
+  const targetTab = Number.isInteger(targetTabId) ? await chrome.tabs.get(targetTabId).catch(() => null) : null;
+  const plan = CaptureITBackgroundEvents.planTabCapture({ targetTab, extensionId: chrome.runtime.id, activateTarget });
+  if (plan.action === 'skip') throw new Error(CaptureITBackgroundEvents.skipMessage(plan.reason));
+
+  if (plan.steps.includes('activate')) {
     await chrome.tabs.update(plan.targetTabId, { active: true });
-    await chrome.tabs.get(plan.targetTabId);
+    await chrome.windows.update(plan.windowId, { focused: true }).catch(() => {});
   }
-  if (plan.steps.includes('delay')) {
-    await delay();
+  if (plan.steps.includes('wait-paint')) {
+    await waitForTabPaint(plan.targetTabId);
   }
-  const image = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
-  if (plan.steps.includes('restore') && Number.isInteger(plan.restoreTabId)) {
-    await chrome.tabs.update(plan.restoreTabId, { active: true }).catch(() => {});
+  if (plan.steps.includes('verify')) {
+    const [visible] = await chrome.tabs.query({ windowId: plan.windowId, active: true });
+    if (!visible || visible.id !== plan.targetTabId) throw new Error(CaptureITBackgroundEvents.skipMessage('moved'));
   }
-  return image;
+  // 캡처하는 동안 CaptureIT 알림을 감춘다(직전 캡처 알림이 다음 사진에 찍히지 않게).
+  await setCaptureItUiVisible(plan.targetTabId, false);
+  try {
+    return await captureWithRateLimit(plan.windowId);
+  } finally {
+    await setCaptureItUiVisible(plan.targetTabId, true);
+  }
 }
 
-function coordinatorFor(windowId, targetTabId, delay) {
+function setCaptureItUiVisible(tabId, visible) {
+  return chrome.tabs.sendMessage(tabId, { type: 'CAPTUREIT_UI', visible }, { frameId: 0 }).catch(() => {});
+}
+
+// 브라우저는 화면 캡처를 초당 2회로 제한한다. 입력 후 바로 제출하면 세 장이 0.5초 안에 몰려
+// 한 장이 조용히 사라졌으므로, 간격을 두고 제한에 걸리면 한 번 더 시도한다.
+const MIN_CAPTURE_INTERVAL_MS = 550;
+let lastCaptureAt = 0;
+
+async function captureWithRateLimit(windowId) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const wait = lastCaptureAt + MIN_CAPTURE_INTERVAL_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCaptureAt = Date.now();
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+    } catch (error) {
+      if (attempt > 0 || !/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/.test(String(error && error.message))) throw error;
+    }
+  }
+  throw new Error('화면 캡처에 실패했습니다.');
+}
+
+function coordinatorFor(targetTabId, captureOptions = {}) {
   return CaptureITCaptureCoordinator.createCaptureCoordinator({
     loadSession,
     saveSession,
     persistEvidence,
-    captureVisible: () => captureVisibleGuarded(windowId, targetTabId, delay),
+    captureVisible: () => captureVisibleGuarded(targetTabId, captureOptions),
     // 중복 화면 합치기: 직전 증적과 거의 같은 화면이면 새 증적 대신 직전 증적에 합친다.
     fingerprintImage: (dataUrl) => CaptureITEvidenceDedupe.fingerprintImageDataUrl(dataUrl),
     loadEvidence: (id) => CaptureITStorage.getEvidence(id),
@@ -125,9 +181,19 @@ function contextSummary(context = {}) {
   ].filter(Boolean).join(' · ').slice(0, 160);
 }
 
+// 녹화 중인 탭과 그 탭에서 열린 팝업·새 창만 수집한다. 다른 탭을 클릭해도 녹화되던 문제를 막는다.
+function isSessionTab(session, tab) {
+  if (!session || !Number.isInteger(session.tabId) || !tab) return true;
+  const allowed = new Set([session.tabId, ...(session.childTabIds || [])]);
+  return allowed.has(tab.id);
+}
+
 async function captureRequest(message, sender) {
   if (!sender.tab) throw new Error('Capture request has no source tab');
-  const evidence = await coordinatorFor(sender.tab.windowId, sender.tab.id).capture({
+  const session = await loadSession();
+  if (!session || !session.active) throw new Error('Capture session is not active');
+  if (!isSessionTab(session, sender.tab)) throw new Error('녹화 중인 탭이 아니어서 건너뜁니다.');
+  const evidence = await coordinatorFor(sender.tab.id).capture({
     triggerType: message.triggerType,
     context: message.context,
     before: message.before,
@@ -147,7 +213,7 @@ async function captureRequest(message, sender) {
     contextSummary: contextSummary(message.context),
     pageTitle: message.context && message.context.pageTitle || '',
     targetText: message.context && message.context.target && message.context.target.visibleText || '',
-  }).catch(() => {});
+  }, { frameId: 0 }).catch(() => {});
   return { ok: true, evidenceId: evidence.id, sequenceNo: evidence.sequenceNo, merged: Boolean(evidence.merged) };
 }
 
@@ -156,20 +222,19 @@ async function resolveRecordingTargetTabId(requestedTabId) {
   // 항상 editor.html 자신이다(사용자가 그 탭에서 버튼을 눌렀으므로). 그래서 요청받은 tabId가
   // CaptureIT 자신의 확장 페이지라면, 사용자가 그 전에 보고 있던 실제 웹페이지 탭
   // (lastActiveWebTabId)으로 대체한다.
-  if (!Number.isInteger(requestedTabId)) return lastActiveWebTabId;
+  if (!Number.isInteger(requestedTabId)) return lastWebTabId();
   try {
     const tab = await chrome.tabs.get(requestedTabId);
     if (isHttpUrl(tab.url)) return requestedTabId;
   } catch {
-    // 탭을 조회할 수 없으면 아래에서 lastActiveWebTabId로 폴백한다.
+    // 탭을 조회할 수 없으면 아래에서 마지막 웹페이지 탭으로 폴백한다.
   }
-  return lastActiveWebTabId;
+  return lastWebTabId();
 }
 
 async function startRecordingRequest(message, sender) {
   const requestedTabId = message.tabId || sender.tab && sender.tab.id || null;
   const tabId = await resolveRecordingTargetTabId(requestedTabId);
-  const windowId = message.windowId || sender.tab && sender.tab.windowId;
   const existing = await loadSession();
   if (existing && existing.active && (!tabId || existing.tabId === tabId)) {
     return { ok: true, session: existing };
@@ -191,10 +256,12 @@ async function startRecordingRequest(message, sender) {
   // 확장 페이지 자신의 정보가 된다. 여기서 실제 웹페이지 탭(tabId)에게 COLLECT_PAGE_CONTEXT를
   // 물어봐서 진짜 페이지 컨텍스트를 우선 사용하고, 탭이 준비되지 않았거나 chrome:// 페이지 등이라
   // content script가 없어 실패하는 경우에만 editor.js가 보낸 값으로 폴백한다.
-  const contextResponse = await chrome.tabs.sendMessage(tabId, { type: 'COLLECT_PAGE_CONTEXT' }).catch(() => null);
+  const contextResponse = await collectPageContextWithInjection(tabId);
   const captureBaselineContext = (contextResponse && contextResponse.ok && contextResponse.context) || message.captureBaselineContext || {};
-  const started = await coordinatorFor(windowId, tabId).startRecordingSession({
+  // 첫 화면(baseline)은 대상 탭으로 넘어가 그려진 뒤 찍는다. 편집기로 되돌아가지 않는다.
+  const started = await coordinatorFor(tabId, { activateTarget: true }).startRecordingSession({
     tabId,
+    reportId: message.reportId || null,
     recordingPolicy: message.recordingPolicy || {},
     captureBaselineContext,
   });
@@ -204,11 +271,23 @@ async function startRecordingRequest(message, sender) {
   return { ok: true, session: started, autoCaptureAvailable };
 }
 
-async function stopRecordingRequest(message, sender) {
-  const windowId = message.windowId || sender.tab && sender.tab.windowId;
+// 확장을 설치·갱신하기 전에 열린 탭에는 수집 스크립트가 없다. 그런 탭은 스크립트를 넣어 주고,
+// 그래도 응답이 없을 때만(IE 모드 등) 자동 수집이 안 되는 탭으로 본다.
+async function collectPageContextWithInjection(tabId) {
+  const ask = () => chrome.tabs.sendMessage(tabId, { type: 'COLLECT_PAGE_CONTEXT' }, { frameId: 0 }).catch(() => null);
+  const first = await ask();
+  if (first && first.ok) return first;
+  if (!chrome.scripting) return first;
+  const files = (chrome.runtime.getManifest().content_scripts || [])[0];
+  if (!files || !files.js) return first;
+  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: files.js }).catch(() => null);
+  return ask();
+}
+
+async function stopRecordingRequest() {
   const active = await loadSession();
   if (!active || !active.active) return { ok: true, session: active || null };
-  const stopped = await coordinatorFor(windowId).stopRecordingSession(active);
+  const stopped = await coordinatorFor(active.tabId).stopRecordingSession(active);
   return { ok: true, session: stopped };
 }
 
@@ -239,6 +318,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
   const session = await loadSession();
   if (!session || !session.active || session.mode !== 'event') return;
+  if (!isSessionTab(session, { id: tabId })) return;
   // Bug_Duplicate_Capture: manifest.json은 content_scripts에 all_frames:true를 지정하므로
   // content.js는 페이지의 모든 iframe에서 독립적으로 실행된다. frameId를 지정하지 않고
   // chrome.tabs.sendMessage(tabId, message)를 호출하면 그 탭의 모든 프레임(메인 프레임 +
@@ -252,25 +332,51 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }).catch(() => {});
 });
 
+// 녹화 중인 탭이 연 팝업·새 창도 같은 녹화로 본다(업무 화면이 자식 창으로 열리는 경우).
+chrome.tabs.onCreated.addListener((tab) => {
+  if (!Number.isInteger(tab.openerTabId)) return;
+  enqueue(async () => {
+    const session = await loadSession();
+    if (!session || !session.active || !isSessionTab(session, { id: tab.openerTabId })) return;
+    session.childTabIds = [...new Set([...(session.childTabIds || []), tab.id])];
+    await saveSession(session);
+  }).catch(() => {});
+});
+
+// 녹화 중인 탭을 닫으면 녹화를 끝낸다. 켜진 채로 남으면 다른 탭이 계속 찍혔다.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  enqueue(async () => {
+    const session = await loadSession();
+    if (!session || !session.active || session.tabId !== tabId) return;
+    await coordinatorFor(tabId).stopRecordingSession(session);
+    await chrome.runtime.sendMessage({ type: 'SESSION_CHANGED', reason: 'tab-closed' }).catch(() => {});
+  }).catch(() => {});
+});
+
+// 브라우저를 다시 켜면 이전 녹화는 끝난 것으로 본다.
+chrome.runtime.onStartup.addListener(() => {
+  enqueue(async () => {
+    const session = await loadSession();
+    if (session && session.active) await coordinatorFor(session.tabId).stopRecordingSession(session);
+  }).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return false;
   if (message.type === 'CAPTURE_REQUEST') {
-    captureQueue = captureQueue
-      .then(() => captureRequest(message, sender))
+    enqueue(() => captureRequest(message, sender))
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'START_RECORDING_SESSION') {
-    recordingQueue = recordingQueue
-      .then(() => startRecordingRequest(message, sender))
+    enqueue(() => startRecordingRequest(message, sender))
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message.type === 'STOP_RECORDING_SESSION') {
-    recordingQueue = recordingQueue
-      .then(() => stopRecordingRequest(message, sender))
+    enqueue(() => stopRecordingRequest())
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

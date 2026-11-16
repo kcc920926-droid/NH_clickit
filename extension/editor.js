@@ -201,10 +201,17 @@
   // 순차 실행되는 동안의 진행 상태. { featureId, steps: [{ key, label, status }] } 형태이며
   // status는 'pending'|'active'|'done'|'error' 중 하나. 저장소에 저장하지 않는 순수 UI 상태로,
   // featureCard()가 이 값을 읽어 해당 feature 카드에만 진행 표시(체크리스트/그라데이션)를 그린다.
-  let aiPipelineStatus = null;
-  let aiPipelineClearTimer = null;
+  // 테스트케이스별 AI 진행 상태(featureId → { steps }). 하나만 두면 두 매핑이 겹칠 때 진행 표시가 섞였다.
+  const aiPipelines = new Map();
+  const aiPipelineClearTimers = new Map();
+  // 펼쳐 둔 증적 세트(sessionId). 다시 그려도 펼친 상태를 유지한다.
+  const expandedSessions = new Set();
   // 녹화 대상 탭에서 콘텐츠 스크립트가 응답했는지(IE 모드 탭 등은 응답하지 않는다).
   let autoCaptureAvailable = true;
+  // AI 연결이 확인된 뒤에만(연결 테스트 성공 또는 실제 호출 성공) 자동 AI 기능을 돌린다.
+  // 확인 전에 자동으로 부르면 사내망 밖이나 설정 전에는 매핑할 때마다 빨간 오류가 떴다.
+  let llmReady = false;
+  const LLM_TIMEOUT_MS = 60000;
   // 붙여넣기·파일 불러오기 전용 수집 묶음. 녹화 세션과 순번이 섞이지 않도록 따로 관리하고,
   // 마지막 입력 후 IMPORT_SESSION_GAP_MS 안에 이어 넣으면 같은 묶음으로 잇는다.
   let importSession = null;
@@ -474,13 +481,32 @@
 
   function featureCard(feature, index) {
     const selected = feature.id === currentFeatureId;
-    const pipeline = aiPipelineStatus && aiPipelineStatus.featureId === feature.id ? aiPipelineStatus : null;
+    const pipeline = aiPipelines.get(feature.id) || null;
     const generating = Boolean(pipeline && pipeline.steps.some((step) => step.status === 'active'));
     const card = document.createElement('article');
     card.className = `feature-item ${selected ? 'selected' : ''} ${generating ? 'ai-generating' : ''}`;
     card.dataset.featureId = feature.id;
-    const onSelect = () => selectFeature(feature.id);
-    card.addEventListener('click', onSelect);
+    // 제목 줄을 누르면 선택/해제, 카드 안 다른 곳을 누르면 선택만 한다(입력하려다 카드가 접히지 않게).
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('input, textarea, button')) return;
+      if (event.target.closest('.feature-title-row')) selectFeature(feature.id);
+      else if (currentFeatureId !== feature.id) selectFeature(feature.id);
+    });
+    // 증적(세트)을 카드에 끌어다 놓으면 이 테스트케이스에 연결한다.
+    card.addEventListener('dragover', (event) => {
+      if (!draggedEvidenceIdsType(event)) return;
+      event.preventDefault();
+      card.classList.add('drop-hover');
+    });
+    card.addEventListener('dragleave', () => card.classList.remove('drop-hover'));
+    card.addEventListener('drop', (event) => {
+      card.classList.remove('drop-hover');
+      const evidenceIds = readDraggedEvidenceIds(event);
+      if (!evidenceIds) return;
+      event.preventDefault();
+      currentFeatureId = feature.id;
+      mapEvidenceIdsWithConfirm(evidenceIds, feature).catch((error) => setMessage(error.message, true));
+    });
     const header = document.createElement('div');
     header.className = 'feature-title-row';
     const indexLabel = document.createElement('span');
@@ -489,6 +515,7 @@
     const titleInput = document.createElement('input');
     titleInput.type = 'text';
     titleInput.className = 'feature-title-input';
+    titleInput.dataset.featureField = 'title';
     titleInput.value = feature.title || '';
     titleInput.placeholder = '테스트케이스명';
     titleInput.addEventListener('click', (event) => event.stopPropagation());
@@ -543,6 +570,7 @@
     descriptionLabel.textContent = '테스트케이스 설명';
     const description = document.createElement('textarea');
     description.className = 'feature-description-edit';
+    description.dataset.featureField = 'description';
     description.rows = 2;
     description.placeholder = '테스트케이스 설명';
     description.value = feature.description || '';
@@ -559,6 +587,7 @@
     expectedField.className = 'wide';
     expectedField.append('기대 결과');
     const expectedInput = document.createElement('textarea');
+    expectedInput.dataset.featureField = 'expectedResult';
     expectedInput.rows = 2;
     expectedInput.value = feature.result.expectedResult || '';
     expectedInput.addEventListener('click', (event) => event.stopPropagation());
@@ -568,6 +597,7 @@
     actualField.className = 'wide';
     actualField.append('실제 결과');
     const actualInput = document.createElement('textarea');
+    actualInput.dataset.featureField = 'actualResult';
     actualInput.rows = 2;
     actualInput.value = feature.result.actualResult || '';
     actualInput.addEventListener('click', (event) => event.stopPropagation());
@@ -587,9 +617,45 @@
     return card;
   }
 
+  // 입력 중인 칸의 값을 화면을 다시 그리기 전에 테스트케이스에 반영한다(change 이벤트를 기다리지 않는다).
+  function commitFeatureField(feature, field, value) {
+    if (field === 'title') feature.title = value;
+    else if (field === 'description') feature.description = value;
+    else if (field === 'expectedResult') feature.result.expectedResult = value;
+    else if (field === 'actualResult') feature.result.actualResult = value;
+    else return;
+    queueSave();
+  }
+
+  // 카드를 다시 그려도 입력 중인 글자와 커서를 잃지 않게 한다. AI 진행 표시나 다른 동작이 화면을
+  // 다시 그리면 입력하던 칸이 통째로 바뀌어 글자가 사라지던 문제를 막는다.
   function renderFeatures() {
+    const active = document.activeElement;
+    let restore = null;
+    if (active && elements.featureList.contains(active) && active.dataset && active.dataset.featureField) {
+      const card = active.closest('[data-feature-id]');
+      const feature = card && editorState.features.find((item) => item.id === card.dataset.featureId);
+      if (feature) {
+        commitFeatureField(feature, active.dataset.featureField, active.value);
+        restore = {
+          featureId: feature.id,
+          field: active.dataset.featureField,
+          start: active.selectionStart,
+          end: active.selectionEnd,
+          scrollTop: active.scrollTop,
+        };
+      }
+    }
     elements.featureList.replaceChildren(...editorState.features.map(featureCard));
     elements.noFeature.hidden = editorState.features.length > 0;
+    if (restore) {
+      const field = elements.featureList.querySelector(`[data-feature-id="${restore.featureId}"] [data-feature-field="${restore.field}"]`);
+      if (field) {
+        field.focus({ preventScroll: true });
+        try { field.setSelectionRange(restore.start, restore.end); } catch { /* 선택 범위를 지원하지 않는 칸 */ }
+        field.scrollTop = restore.scrollTop;
+      }
+    }
     scheduleMappingLinks();
   }
 
@@ -652,7 +718,7 @@
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = '이 테스트케이스에 Capture_Graph나 Evidence를 드래그하거나 매핑 버튼을 누르세요.';
+      elements.featureMappingGuidance.textContent = '증적 세트를 테스트케이스 카드로 끌어다 놓거나, 증적의 🔗 버튼을 누르세요.';
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -731,11 +797,12 @@
       controls.append(
         button('↑', () => moveMappedEvidence(evidence.id, -1), mappedIndex === 0),
         button('↓', () => moveMappedEvidence(evidence.id, 1), mappedIndex === feature.result.evidenceIds.length - 1),
+        button('연결 해제', () => unmapSingleEvidence(evidence.id).catch((error) => setMessage(error.message, true))),
       );
     } else {
-      controls.append(button('연결', () => mapEvidence(evidence), !currentFeature()));
+      controls.append(button('연결', () => mapEvidence(evidence).catch((error) => setMessage(error.message, true))));
     }
-    controls.append(button('삭제', () => removeEvidence(evidence.id)));
+    controls.append(button('사진 삭제', () => removeEvidence(evidence.id)));
     body.append(titleRow, meta, description, controls);
     card.append(image, body);
     return card;
@@ -805,16 +872,13 @@
     button.title = '테스트케이스에 매핑';
     button.setAttribute('aria-label', '테스트케이스에 매핑');
     button.replaceChildren(iconSvg('link'));
-    button.disabled = !currentFeature();
+    if (!currentFeature()) button.title = '오른쪽에서 테스트케이스를 먼저 고르세요(없으면 새로 만들어 연결합니다)';
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
-      const feature = currentFeature();
-      if (!feature) {
-        setMessage('먼저 테스트케이스를 선택하십시오.', true);
-        return;
-      }
       try {
-        await mapEvidenceIds(evidenceIds, feature);
+        const feature = await featureForMapping();
+        if (!feature) return;
+        await mapEvidenceIdsWithConfirm(evidenceIds, feature);
       } catch (error) {
         setMessage(error.message, true);
       }
@@ -840,10 +904,17 @@
       return option;
     });
     elements.quickMappingFeature.replaceChildren(...options);
-    elements.quickMappingVerification.value = '';
-    elements.quickMappingExpectedResult.value = '';
-    elements.quickMappingActualResult.value = '';
-    elements.quickMappingDialog.showModal();
+    fillQuickMappingFields();
+    if (!elements.quickMappingDialog.open) elements.quickMappingDialog.showModal();
+  }
+
+  // 고른 테스트케이스에 이미 적힌 값을 미리 채운다. 빈칸으로 열면 제출 시 기존 결과가 지워졌다.
+  function fillQuickMappingFields() {
+    const feature = editorState.features.find((item) => item.id === elements.quickMappingFeature.value);
+    const result = feature && feature.result || {};
+    elements.quickMappingVerification.value = result.verification || '';
+    elements.quickMappingExpectedResult.value = result.expectedResult || '';
+    elements.quickMappingActualResult.value = result.actualResult || '';
   }
 
   // 더블클릭이 카드/노드 내부의 버튼(펼치기, 이 기능에 매핑)을 눌렀을 때도 발생하므로,
@@ -968,7 +1039,7 @@
     return node;
   }
 
-  function captureGraphCard(group) {
+  function captureGraphCard(group, { forceExpand = false } = {}) {
     const evidenceById = new Map(editorState.evidence.map((item) => [item.id, item]));
     const items = group.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
     const mappedFeatureIds = [...new Set(items.map((item) => item.featureSpecId).filter(Boolean))];
@@ -1015,6 +1086,7 @@
     titleInput.addEventListener('dragstart', (event) => event.preventDefault());
     titleInput.addEventListener('mousedown', (event) => event.stopPropagation());
     titleInput.addEventListener('click', (event) => event.stopPropagation());
+    titleInput.addEventListener('dblclick', (event) => event.stopPropagation());
     titleInput.addEventListener('change', () => { saveEvidenceGroupLabel(group, titleInput.value); });
 
     const headerActions = document.createElement('div');
@@ -1036,16 +1108,18 @@
     body.append(...items.map((item) => captureNode(item, group.evidenceIds)));
 
     if (group.count > 1) {
-      let expanded = false;
-      body.hidden = true;
+      let expanded = forceExpand || expandedSessions.has(group.sessionId);
+      body.hidden = !expanded;
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'capture-graph-toggle';
-      toggle.title = '펼치기';
-      toggle.setAttribute('aria-label', '펼치기');
-      toggle.replaceChildren(iconSvg('chevronDown'));
+      toggle.title = expanded ? '접기' : '펼치기';
+      toggle.setAttribute('aria-label', expanded ? '접기' : '펼치기');
+      toggle.replaceChildren(iconSvg(expanded ? 'chevronUp' : 'chevronDown'));
       toggle.addEventListener('click', () => {
         expanded = !expanded;
+        if (expanded) expandedSessions.add(group.sessionId);
+        else expandedSessions.delete(group.sessionId);
         body.hidden = !expanded;
         toggle.title = expanded ? '접기' : '펼치기';
         toggle.setAttribute('aria-label', expanded ? '접기' : '펼치기');
@@ -1091,7 +1165,7 @@
     const evidenceId = evidenceDetailIds[evidenceDetailIndex];
     const evidence = editorState.evidence.find((item) => item.id === evidenceId);
     if (!evidence) return;
-    elements.evidenceDetailTitle.textContent = `증적 ${evidenceDetailIndex + 1}/${evidenceDetailIds.length} · #${evidence.sequenceNo} · ${evidence.triggerType}`;
+    elements.evidenceDetailTitle.textContent = `증적 ${evidenceDetailIndex + 1}/${evidenceDetailIds.length} · #${evidence.sequenceNo} · ${evidenceStepLabel(evidence)}`;
     elements.evidenceDetailImage.dataset.evidenceId = evidence.id;
     elements.evidenceDetailImage.src = evidence.docImageDataUrl || evidence.imageDataUrl;
     // 상세 뷰어는 <img>가 하나뿐이라 크롭이 끝나기 전에 다른 증적으로 이동하면 이전 요청이 늦게
@@ -1104,7 +1178,16 @@
         }
       })
       .catch(() => {});
-    elements.evidenceDetailMeta.textContent = JSON.stringify(evidenceSummary(evidence), null, 2);
+    const summary = evidenceSummary(evidence);
+    const mergedCount = Array.isArray(evidence.mergedEvents) ? evidence.mergedEvents.length : 0;
+    elements.evidenceDetailMeta.textContent = [
+      `화면: ${summary.pageTitle || '-'}`,
+      `주소: ${summary.pageUrl || '-'}`,
+      `동작: ${evidenceStepLabel(evidence)}${summary.targetText ? ` (${summary.targetText})` : ''}`,
+      `수집 시각: ${formatTimestamp(summary.capturedAt)}`,
+      `연결된 테스트케이스: ${mappedFeatureTitle(evidence) || '없음'}`,
+      mergedCount ? `같은 화면 합침: ${mergedCount}번` : '',
+    ].filter(Boolean).join('\n');
     elements.previousEvidenceDetail.disabled = evidenceDetailIds.length <= 1 || evidenceDetailIndex === 0;
     elements.nextEvidenceDetail.disabled = evidenceDetailIds.length <= 1 || evidenceDetailIndex === evidenceDetailIds.length - 1;
   }
@@ -1134,7 +1217,7 @@
     if (!evidenceId) return;
     const existingIds = new Set(editorState.evidence.map((item) => item.id));
     if (!existingIds.has(evidenceId)) return;
-    await removeEvidence(evidenceId);
+    if (!await removeEvidence(evidenceId)) return;
     const existingIdsAfter = new Set(editorState.evidence.map((item) => item.id));
     evidenceDetailIds = evidenceDetailIds.filter((id) => id !== evidenceId && existingIdsAfter.has(id));
     if (evidenceDetailIds.length === 0) {
@@ -1190,10 +1273,12 @@
   function renderEvidence() {
     // 리렌더링으로 DOM이 교체되면 이전에 hover 상태였던 프리뷰가 고아 상태로 남을 수 있으므로 항상 숨긴다.
     hideNodeContextPreview();
+    // 검색은 세트 단위로 거른다. 일부 사진만 남기면 세트 이름·개수·삭제·연결이 잘린 세트에만 적용됐다.
     const query = elements.evidenceSearch.value.trim().toLowerCase();
-    const evidenceItems = editorState.evidence.filter((item) => !query || evidenceSearchText(item).includes(query));
-    const graphs = CaptureITDomain.groupIntoCaptureSessionSets(evidenceItems);
-    elements.evidenceInbox.replaceChildren(...graphs.map((group) => captureGraphCard(group)));
+    const evidenceById = new Map(editorState.evidence.map((item) => [item.id, item]));
+    const graphs = CaptureITDomain.groupIntoCaptureSessionSets(editorState.evidence)
+      .filter((group) => !query || group.evidenceIds.some((id) => evidenceSearchText(evidenceById.get(id)).includes(query)));
+    elements.evidenceInbox.replaceChildren(...graphs.map((group) => captureGraphCard(group, { forceExpand: Boolean(query) })));
     const feature = currentFeature();
     const mapped = feature ? feature.result.evidenceIds
       .map((id) => editorState.evidence.find((item) => item.id === id))
@@ -1423,22 +1508,24 @@
   // #guidance-banner에 표시한다. 표시할 문구가 없으면 배너를 숨긴다.
   function renderGuidance() {
     const messages = [];
-    // 8.6/8.1: 캡처 세션 활성 여부에 따른 안내. 세션이 비활성이고 아직 아무 Evidence도 없으면
-    // "캡처 시작/이미지 불러오기" 안내로 흡수한다.
-    if (session && session.active) {
-      messages.push('캡처 세션이 진행 중입니다.');
-    } else {
-      messages.push('캡처를 시작하거나 이미지를 불러오세요.');
-    }
-    // 8.5: Feature_Spec이 하나도 없으면 추가부터 안내.
-    if (editorState.features.length === 0) {
-      messages.push('테스트케이스를 추가한 뒤 증적을 연결하세요.');
-    }
-    // 8.4: Draft_Report 상태면 저장이 선택 사항임을 안내.
-    if (report && report.isDraft) {
+    const evidenceCount = editorState.evidence.length;
+    const featureCount = editorState.features.length;
+    const unmappedFeatures = editorState.features.filter((feature) => feature.result.evidenceIds.length === 0).length;
+    const recording = Boolean(session && session.active);
+    if (activeStageIndex === 0) {
+      if (recording) messages.push('녹화 중입니다. 테스트 화면을 평소처럼 조작하고, 끝나면 녹화 종료를 누르세요.');
+      else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
+      else messages.push(`증적 ${evidenceCount}개가 모였습니다. 2단계에서 테스트케이스에 연결하세요.`);
+    } else if (activeStageIndex === 1) {
+      if (evidenceCount === 0) messages.push('아직 증적이 없습니다. 1단계에서 녹화하거나 스크린샷을 붙여넣으세요.');
+      else if (featureCount === 0) messages.push('증적 세트의 🔗 버튼을 누르면 테스트케이스가 만들어지며 연결됩니다. 오른쪽 + 로 먼저 만들어도 됩니다.');
+      else if (unmappedFeatures > 0) messages.push(`증적이 연결되지 않은 테스트케이스가 ${unmappedFeatures}개 있습니다. 카드를 고른 뒤 🔗 버튼을 누르거나, 증적 세트를 카드로 끌어다 놓으세요.`);
+      else messages.push('판정(PASS/FAIL)을 정한 뒤 3단계에서 문서를 만드세요.');
+    } else if (featureCount === 0) {
+      messages.push('아직 테스트케이스가 없습니다. 사진만 전달하려면 "증적만 ZIP"을 누르세요.');
+    } else if (report && report.isDraft) {
       messages.push('저장은 선택사항입니다. 미리보기나 ZIP 생성 후에 해도 됩니다.');
     }
-    // 8.7: Report_Draft_Suggestion 다이얼로그가 열려 있으면 승인/수정 안내.
     if (elements.reportDraftSuggestionDialog.open) {
       messages.push('제안된 보고서명과 형상·체크아웃 개요는 승인 또는 수정 후 저장됩니다.');
     }
@@ -1501,6 +1588,7 @@
     });
 
     applyActionPlan(snapshot);
+    renderGuidance();
     renderCompletionSummary();
     renderTemplatePicker();
     scheduleMappingLinks();
@@ -1532,13 +1620,39 @@
     renderReportSelector();
   }
 
+  // 증적은 보고서별로 보여준다. 예전 증적(reportId 없음)은 처음 여는 보고서가 넘겨받는다.
+  // 그전에는 모든 보고서에 모든 증적이 섞여 보였고, 다른 보고서의 사진이 '증적만 ZIP'에도 들어갔다.
+  async function loadReportEvidence() {
+    const all = await CaptureITStorage.listEvidence();
+    if (!report) return all.filter((item) => !item.reportId);
+    const claimed = all.filter((item) => !item.reportId);
+    for (const item of claimed) {
+      item.reportId = report.id;
+      await CaptureITStorage.putEvidence(item);
+    }
+    return all.filter((item) => item.reportId === report.id);
+  }
+
+  // 보고서가 아직 없을 때 편집하면 작업 초안을 만들어 저장한다(전에는 저장 없이 사라졌다).
   async function saveReport() {
-    if (!report) return;
+    if (!report) {
+      report = CaptureITDomain.ensureDraftReport(null);
+      for (const item of editorState.evidence) {
+        if (item.reportId) continue;
+        item.reportId = report.id;
+        await CaptureITStorage.putEvidence(item);
+      }
+    }
     report.features = editorState.features;
     report.updatedAt = new Date().toISOString();
     elements.saveStatus.textContent = '저장 중…';
-    await CaptureITStorage.putReport(report);
-    await refreshReportSummaries();
+    try {
+      await CaptureITStorage.putReport(report);
+      await refreshReportSummaries();
+    } catch (error) {
+      elements.saveStatus.textContent = '저장 실패';
+      throw error;
+    }
     elements.saveStatus.textContent = '저장됨';
     renderWarnings();
     renderStorageStatus();
@@ -1580,7 +1694,7 @@
     const loaded = await CaptureITStorage.getReport(reportId);
     if (!loaded) throw new Error('보고서를 찾을 수 없습니다.');
     report = loaded;
-    const evidence = await CaptureITStorage.listEvidence();
+    const evidence = await loadReportEvidence();
     editorState = CaptureITDomain.createEditorState(evidence, report.features || []);
     currentFeatureId = editorState.features[0] && editorState.features[0].id || null;
     await extensionStorage.set({ activeReportId: report.id });
@@ -1596,13 +1710,10 @@
   }
 
   async function removeReport() {
-    if (!report || !confirm(`'${report.title}' 보고서를 삭제하시겠습니까?`)) return;
-    const removedFeatureIds = new Set(report.features.map((feature) => feature.id));
-    for (const evidence of editorState.evidence) {
-      if (!removedFeatureIds.has(evidence.featureSpecId)) continue;
-      evidence.featureSpecId = null;
-      await CaptureITStorage.putEvidence(evidence);
-    }
+    if (!report) return;
+    const photoCount = editorState.evidence.length;
+    if (!confirm(`'${report.title || '제목 없는 보고서'}' 보고서와 이 보고서의 사진 ${photoCount}장을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    for (const evidence of editorState.evidence) await CaptureITStorage.deleteEvidence(evidence.id);
     await CaptureITStorage.deleteReport(report.id);
     const remaining = await CaptureITStorage.listReports();
     if (remaining.length === 0) {
@@ -1648,15 +1759,58 @@
     renderStage();
   }
 
+  // 연결할 테스트케이스: 고른 것이 있으면 그것, 하나도 없으면 새로 만든다. 여러 개인데 고르지 않았으면 안내한다.
+  async function featureForMapping() {
+    const selected = currentFeature();
+    if (selected) return selected;
+    if (editorState.features.length === 0) {
+      await addFeature();
+      setMessage('테스트케이스가 없어서 새로 만들어 연결했습니다. 이름을 바꿔 주세요.');
+      return currentFeature();
+    }
+    setMessage('오른쪽에서 연결할 테스트케이스를 먼저 고르세요.', true);
+    return null;
+  }
+
   async function mapEvidence(evidence) {
-    const feature = currentFeature();
-    if (!feature) throw new Error('먼저 테스트케이스를 선택하십시오.');
-    CaptureITDomain.mapEvidence(editorState, evidence.id, feature.id);
+    const feature = await featureForMapping();
+    if (!feature) return;
+    await mapEvidenceIdsWithConfirm([evidence.id], feature);
+  }
+
+  // 다른 테스트케이스에 이미 연결된 사진이 섞여 있으면 옮길지 묻는다. 취소하면 연결 안 된 사진만 연결한다.
+  async function mapEvidenceIdsWithConfirm(evidenceIds, feature) {
+    const elsewhere = evidenceIds
+      .map((id) => editorState.evidence.find((item) => item.id === id))
+      .filter((item) => item && item.featureSpecId && item.featureSpecId !== feature.id);
+    let targetIds = evidenceIds;
+    if (elsewhere.length > 0) {
+      const other = editorState.features.find((item) => item.id === elsewhere[0].featureSpecId);
+      const moveAll = confirm(`이 중 ${elsewhere.length}장은 다른 테스트케이스('${other ? other.title : '다른 항목'}')에 연결돼 있습니다.\n확인: '${feature.title}'(으)로 옮깁니다.\n취소: 연결되지 않은 사진만 연결합니다.`);
+      if (!moveAll) {
+        const elsewhereIds = new Set(elsewhere.map((item) => item.id));
+        targetIds = evidenceIds.filter((id) => !elsewhereIds.has(id));
+      }
+    }
+    if (targetIds.length === 0) {
+      setMessage('새로 연결할 사진이 없습니다.');
+      return;
+    }
+    await mapEvidenceIds(targetIds, feature);
+    setMessage(`'${feature.title}'에 사진 ${targetIds.length}장을 연결했습니다.`);
+  }
+
+  async function unmapSingleEvidence(evidenceId) {
+    const evidence = editorState.evidence.find((item) => item.id === evidenceId);
+    if (!evidence) return;
+    CaptureITDomain.unmapEvidence(editorState, evidenceId);
     await CaptureITStorage.putEvidence(evidence);
     await saveReport();
     renderEvidence();
-    renderRecommendations();
+    renderFeatures();
+    renderFeature();
     renderStage();
+    setMessage('연결을 해제했습니다. 사진은 증적 수집함에 남아 있습니다.');
   }
 
   // Feature_Group_Actions: capture-graph(세션) 헤더의 "세트 연결 해제" 버튼. 그룹에 속한
@@ -1699,7 +1853,8 @@
     await persistMappedEvidence(evidenceIds);
     await saveReport();
     renderEvidence();
-    renderRecommendations();
+    renderFeatures();
+    renderFeature();
     renderStage();
     // Auto_AI_Pipeline: 매핑(🔗 매핑 버튼/드래그앤드롭 공용 경로)이 끝난 직후 자동으로
     // "증적 설명 생성" → "테스트케이스 설명 자동 생성"을 순서대로 호출한다. 매핑 자체는 이미
@@ -1761,16 +1916,13 @@
     elements.mappedEvidence.classList.remove('dragover');
     const evidenceIds = readDraggedEvidenceIds(event);
     if (!evidenceIds) return;
-    const feature = currentFeature();
-    if (!feature) {
-      setMessage('먼저 테스트케이스를 선택하십시오.', true);
-      return;
-    }
-    await mapEvidenceIds(evidenceIds, feature);
+    const feature = await featureForMapping();
+    if (!feature) return;
+    await mapEvidenceIdsWithConfirm(evidenceIds, feature);
   }
 
   async function removeEvidence(evidenceId) {
-    if (!confirm('이 증적을 삭제하시겠습니까? 캡처 순번은 재사용되지 않습니다.')) return;
+    if (!confirm('이 사진을 증적에서 완전히 삭제할까요? 되돌릴 수 없습니다.\n테스트케이스 연결만 끊으려면 "연결 해제"를 누르세요.')) return false;
     for (const feature of editorState.features) {
       feature.result.evidenceIds = feature.result.evidenceIds.filter((id) => id !== evidenceId);
     }
@@ -1780,14 +1932,15 @@
     await saveReport();
     renderEvidence();
     renderFeatures();
-    renderRecommendations();
+    renderFeature();
     renderStage();
+    return true;
   }
 
   // Feature_Group_Actions: capture-graph(세션) 헤더의 "세트 삭제" 버튼. removeEvidence의
   // 삭제/저장/렌더링 순서를 그대로 evidenceIds 배열 전체에 적용한다.
   async function removeEvidenceGroup(evidenceIds) {
-    if (!confirm(`이 증적 세트(${evidenceIds.length}개)를 삭제하시겠습니까? 캡처 순번은 재사용되지 않습니다.`)) return;
+    if (!confirm(`이 증적 세트의 사진 ${evidenceIds.length}장을 모두 삭제할까요? 되돌릴 수 없습니다.`)) return;
     const idSet = new Set(evidenceIds);
     for (const feature of editorState.features) {
       feature.result.evidenceIds = feature.result.evidenceIds.filter((id) => !idSet.has(id));
@@ -1853,7 +2006,7 @@
   // 매우 자주 재렌더링되므로 "그려질 때마다"가 아니라 "세션이 막 종료된 시점 단 1회"로만 트리거를
   // 제한해야 한다 - stopRecordingSession()이 끝난 직후 정확히 그 시점이다.
   function autoRequestSessionTitleForSession(sessionId) {
-    if (!sessionId) return;
+    if (!sessionId || !llmReady) return;
     const group = CaptureITDomain.groupIntoCaptureSessionSets(editorState.evidence)
       .find((item) => item.sessionId === sessionId);
     if (!group || group.evidenceIds.length === 0) return;
@@ -1918,6 +2071,7 @@
     const tab = await activeTabForRecording();
     const response = await chrome.runtime.sendMessage({
       type: 'START_RECORDING_SESSION',
+      reportId: report && report.id || null,
       tabId: tab && tab.id,
       windowId: tab && tab.windowId,
       recordingPolicy: CaptureITDomain.defaultRecordingPolicy({ mode: elements.captureMode.value }),
@@ -1969,9 +2123,14 @@
     const stoppedSessionId = session && session.id;
     session = await stopRecordingSessionRequest();
     sessionButtonState = 'INACTIVE';
+    await refreshEvidence();
     renderSession();
+    // 녹화를 끝내면 다음 할 일(증적 연결·결과 입력)로 넘어간다.
+    if (editorState.evidence.length > 0) activeStageIndex = 1;
     renderStage();
-    setMessage('녹화를 종료했습니다.');
+    setMessage(editorState.evidence.length > 0
+      ? `녹화를 종료했습니다. 증적 ${editorState.evidence.length}개를 테스트케이스에 연결하세요.`
+      : '녹화를 종료했습니다.');
     // Auto_Title_On_Session_Stop: 방금 끝난 세션의 증적 그룹에 한해서만, 세션이 종료되는
     // 이 시점 단 한 번 제목 추천을 자동으로 호출한다(captureGraphCard 재렌더링과는 무관).
     autoRequestSessionTitleForSession(stoppedSessionId);
@@ -2075,6 +2234,7 @@
         const evidence = {
           id: crypto.randomUUID(),
           sessionId: target.id,
+          reportId: report && report.id || null,
           sequenceNo: CaptureITDomain.nextSequence(target),
           capturedAt: fromPaste ? nowIso : new Date(file.lastModified || Date.now()).toISOString(),
           triggerType: fromPaste ? 'clipboard-paste' : 'file-import',
@@ -2255,20 +2415,35 @@
     };
   }
 
+  // 예전에 창 크기가 0일 때 만들어진 빈 이미지("data:,")는 없는 것으로 보고 다시 만든다.
+  function usableImage(dataUrl) {
+    return typeof dataUrl === 'string' && dataUrl.length > 'data:,'.length;
+  }
+
+  // 같은 증적의 자르기를 동시에 여러 번 돌리지 않는다(검색 입력·새 증적마다 다시 그려져 중복 실행됐다).
+  const cropsInFlight = new Map();
+
+  function cropOnce(evidence, field, run) {
+    const key = `${evidence.id}:${field}`;
+    if (cropsInFlight.has(key)) return cropsInFlight.get(key);
+    const job = (async () => {
+      if (!evidence.imageDataUrl) throw new Error(`이미지가 없는 증적입니다: ${evidence.id}`);
+      await run(evidence, cropOptionsForEvidence(evidence));
+      await CaptureITStorage.putEvidence(evidence);
+      return evidence;
+    })().finally(() => cropsInFlight.delete(key));
+    cropsInFlight.set(key, job);
+    return job;
+  }
+
   async function ensureLlmImage(evidence) {
-    if (evidence.llmImageDataUrl) return evidence;
-    if (!evidence.imageDataUrl) throw new Error(`이미지가 없는 증적입니다: ${evidence.id}`);
-    await CaptureITScreenshotCropper.ensureLlmImage(evidence, cropOptionsForEvidence(evidence));
-    await CaptureITStorage.putEvidence(evidence);
-    return evidence;
+    if (usableImage(evidence.llmImageDataUrl)) return evidence;
+    return cropOnce(evidence, 'llm', CaptureITScreenshotCropper.ensureLlmImage);
   }
 
   async function ensureDocImage(evidence) {
-    if (evidence.docImageDataUrl) return evidence;
-    if (!evidence.imageDataUrl) throw new Error(`이미지가 없는 증적입니다: ${evidence.id}`);
-    await CaptureITScreenshotCropper.ensureDocImage(evidence, cropOptionsForEvidence(evidence));
-    await CaptureITStorage.putEvidence(evidence);
-    return evidence;
+    if (usableImage(evidence.docImageDataUrl)) return evidence;
+    return cropOnce(evidence, 'doc', CaptureITScreenshotCropper.ensureDocImage);
   }
 
   // Bug_Fullscreen_Thumbnail 대응: evidence.imageDataUrl은 항상 캡처 시점의 전체 화면
@@ -2279,7 +2454,7 @@
   // 스크롤 위치/포커스 등 사용자 상호작용을 방해하지 않는다). 크롭 실패는 조용히 무시하고
   // 이미 보이고 있는 전체 이미지를 그대로 유지한다(사용자에게 에러를 노출하지 않는 배경 개선).
   function swapToCroppedThumbnailWhenReady(evidence, imageElement) {
-    if (evidence.docImageDataUrl) return;
+    if (usableImage(evidence.docImageDataUrl)) return;
     ensureDocImage(evidence)
       .then((updated) => {
         if (updated.docImageDataUrl) imageElement.src = updated.docImageDataUrl;
@@ -2365,7 +2540,7 @@
     await saveLlmSettings();
     const settings = readLlmSettings();
     const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload });
-    const response = await fetch(adapterRequest.url, adapterRequest.options);
+    const response = await fetchLlm(adapterRequest.url, adapterRequest.options);
     const body = await responseBody(response);
     if (!response.ok) {
       const error = new Error(`내부망 LLM 응답 오류: HTTP ${response.status}`);
@@ -2373,6 +2548,7 @@
       error.responseBody = body;
       throw error;
     }
+    await setLlmReady(true);
     return CaptureITLlm.parseAdapterResponse(body);
   }
 
@@ -2415,7 +2591,7 @@
     const startedAt = Date.now();
     let summary;
     try {
-      const response = await fetch(adapterRequest.url, adapterRequest.options);
+      const response = await fetchLlm(adapterRequest.url, adapterRequest.options);
       const body = await responseBody(response);
       if (!response.ok) {
         const error = new Error(`HTTP ${response.status}`);
@@ -2455,6 +2631,7 @@
     }
     renderLlmDiagnostics(summary);
     await extensionStorage.set({ llmDiagnostics: summary });
+    await setLlmReady(Boolean(summary.ok));
     const redactedRequest = summary.redactedRequest;
     setMessage(summary.ok ? `LLM ${kind === 'connection' ? '연결' : '추천 요청'} 테스트 성공` : `LLM 테스트 확인 필요: ${summary.guidance}`, !summary.ok);
     return redactedRequest;
@@ -2483,7 +2660,7 @@
     if (isCurrentFeature) elements.requestRecommendations.disabled = true;
     setMessage('1단계: 캡처 맥락과 순서로 후보를 선정하고 있습니다.');
     try {
-      const stageOne = CaptureITLlm.buildStageOne(feature, editorState.evidence, report.changePurpose);
+      const stageOne = CaptureITLlm.buildStageOne(feature, editorState.evidence, report && report.changePurpose || '');
       const candidateIds = validateCandidateIds(await postLlm(stageOne));
       setMessage('2단계: 후보와 인접 이미지로 최종 증적을 추천하고 있습니다.');
       for (const evidence of candidateAndAdjacentEvidence(candidateIds)) await ensureThumbnail(evidence);
@@ -2492,7 +2669,7 @@
       // maxLlmImagesPerFeature 정책(기본 5장)을 그대로 재사용해 이미지 개수를 제한한다.
       const maxImages = report && report.recordingPolicy && report.recordingPolicy.maxLlmImagesPerFeature
         || CaptureITDomain.defaultRecordingPolicy().maxLlmImagesPerFeature;
-      const stageTwo = CaptureITLlm.buildStageTwo(feature, editorState.evidence, candidateIds, report.changePurpose, { maxImages });
+      const stageTwo = CaptureITLlm.buildStageTwo(feature, editorState.evidence, candidateIds, report && report.changePurpose || '', { maxImages });
       const validated = CaptureITLlm.validateRecommendations(
         await postLlm(stageTwo),
         new Set(editorState.evidence.map((item) => item.id)),
@@ -2516,9 +2693,10 @@
     description: '테스트케이스 설명 자동 생성',
   };
 
-  function setAiPipelineStepStatus(stepKey, status) {
-    if (!aiPipelineStatus) return;
-    const step = aiPipelineStatus.steps.find((item) => item.key === stepKey);
+  function setAiPipelineStepStatus(featureId, stepKey, status) {
+    const pipeline = aiPipelines.get(featureId);
+    if (!pipeline) return;
+    const step = pipeline.steps.find((item) => item.key === stepKey);
     if (step) step.status = status;
     renderFeatures();
   }
@@ -2526,27 +2704,25 @@
   // feature-item 목록에 진행 중인 파이프라인 정보를 표시하기 위한 상태를 만든다. renderFeatures()가
   // 이 상태를 읽어 해당 feature 카드에 ai-generating 클래스(무지개 그라데이션)와 체크리스트를 그린다.
   function startAiPipeline(featureId) {
-    if (aiPipelineClearTimer) {
-      clearTimeout(aiPipelineClearTimer);
-      aiPipelineClearTimer = null;
-    }
-    aiPipelineStatus = {
+    clearTimeout(aiPipelineClearTimers.get(featureId));
+    aiPipelineClearTimers.delete(featureId);
+    aiPipelines.set(featureId, {
       featureId,
       steps: [
         { key: 'recommendations', label: AI_PIPELINE_STEP_LABELS.recommendations, status: 'active' },
         { key: 'description', label: AI_PIPELINE_STEP_LABELS.description, status: 'pending' },
       ],
-    };
+    });
     renderFeatures();
   }
 
   // 완료된 체크리스트(✓✓)를 사용자가 잠깐 볼 수 있게 남겨둔 뒤 일정 시간 후 지운다.
-  function finishAiPipeline() {
-    aiPipelineClearTimer = setTimeout(() => {
-      aiPipelineStatus = null;
-      aiPipelineClearTimer = null;
+  function finishAiPipeline(featureId) {
+    aiPipelineClearTimers.set(featureId, setTimeout(() => {
+      aiPipelines.delete(featureId);
+      aiPipelineClearTimers.delete(featureId);
       renderFeatures();
-    }, 2500);
+    }, 2500));
   }
 
   // 두 LLM 호출을 순서대로 실행한다: 1단계(증적 설명 생성)가 끝나야 2단계(테스트케이스 설명
@@ -2556,27 +2732,52 @@
     startAiPipeline(feature.id);
     try {
       await requestRecommendations(feature);
-      setAiPipelineStepStatus('recommendations', 'done');
+      setAiPipelineStepStatus(feature.id, 'recommendations', 'done');
     } catch (error) {
-      setAiPipelineStepStatus('recommendations', 'error');
+      setAiPipelineStepStatus(feature.id, 'recommendations', 'error');
       setMessage(`증적 설명 자동 생성 실패: ${error.message}`, true);
     }
-    setAiPipelineStepStatus('description', 'active');
+    setAiPipelineStepStatus(feature.id, 'description', 'active');
     // requestTestCaseDescription은 postLlm 실패 시 내부에서 이미 setMessage로 알리고 null을
     // 반환하지만(throw하지 않음), 매핑된 증적이 없는 등 사전 조건 실패는 여전히 throw할 수 있으므로
     // 여기서도 방어적으로 감싼다.
     try {
       const descriptionResult = await requestTestCaseDescription(feature);
-      setAiPipelineStepStatus('description', descriptionResult ? 'done' : 'error');
+      setAiPipelineStepStatus(feature.id, 'description', descriptionResult ? 'done' : 'error');
     } catch (error) {
-      setAiPipelineStepStatus('description', 'error');
+      setAiPipelineStepStatus(feature.id, 'description', 'error');
       setMessage(`테스트케이스 설명 자동 생성 실패: ${error.message}`, true);
     }
-    finishAiPipeline();
+    finishAiPipeline(feature.id);
   }
 
   function autoRunAiPipelineForFeature(feature) {
+    if (!llmReady) return;
     runAutoAiPipeline(feature).catch(() => {});
+  }
+
+  async function setLlmReady(value) {
+    if (llmReady === value) return;
+    llmReady = value;
+    await extensionStorage.set({ llmReady: value }).catch(() => {});
+  }
+
+  // 응답이 오지 않으면 60초에서 끊고, 연결 실패를 알아볼 수 있는 말로 바꾼다.
+  async function fetchLlm(url, options) {
+    const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(LLM_TIMEOUT_MS)
+      : undefined;
+    try {
+      return await fetch(url, { ...options, signal });
+    } catch (error) {
+      if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new Error(`AI 응답이 ${LLM_TIMEOUT_MS / 1000}초 안에 오지 않았습니다. 더보기 → AI 설정에서 연결 테스트를 해 보세요.`);
+      }
+      if (error instanceof TypeError) {
+        throw new Error('AI 서버에 연결할 수 없습니다. 사내망 연결과 더보기 → AI 설정을 확인하세요.');
+      }
+      throw error;
+    }
   }
 
   function evidenceForFeature(feature) {
@@ -2675,6 +2876,7 @@
   // 요청하고, 성공하면 검토용 다이얼로그에 표시한다(요구사항 10.1, 10.2). 실패 시 조용히 무시하고
   // 미리보기/ZIP 생성 자체를 막지 않는다(요구사항 10.6).
   async function requestReportDraftSuggestion() {
+    if (!llmReady) return;
     const mappedEvidenceByFeature = mappedEvidenceByFeatureForDraft();
     if (mappedEvidenceByFeature.length === 0) return;
     try {
@@ -2759,6 +2961,8 @@
   function buildEvidenceOnlyEntries() {
     const ordered = [...editorState.evidence].sort((left, right) => left.sequenceNo - right.sequenceNo);
     const manifest = {
+      // QA 뷰어가 증적 묶음 ZIP을 알아보고 evidence-index.html로 열 수 있게 표시한다.
+      kind: 'evidence-only',
       generatedAt: new Date().toISOString(),
       report: report ? { id: report.id, title: report.title } : null,
       totalEvidence: ordered.length,
@@ -2807,21 +3011,76 @@
     return lastExport;
   }
 
+  // 파일 이름: 보고서 제목 + 시각(전에는 UUID라 알아볼 수 없고 매번 같은 이름이었다).
+  function exportFilename(suffix) {
+    const title = String(report && report.title || 'CaptureIT')
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 60) || 'CaptureIT';
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    return `CaptureIT/${title}-${suffix}-${stamp}.zip`;
+  }
+
+  // 저장 대화상자에서 고르거나 취소할 때까지 기다린다. download()는 저장 위치를 고르기 전에 끝나서
+  // 취소해도 "생성 완료"가 뜨고, 30초 뒤 파일 주소를 지워 늦게 고르면 저장이 실패할 수 있었다.
+  function waitForDownload(downloadId) {
+    return new Promise((resolve) => {
+      if (!chrome.downloads || !chrome.downloads.onChanged) {
+        resolve({ state: 'complete' });
+        return;
+      }
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        chrome.downloads.onChanged.removeListener(listener);
+        resolve(result);
+      };
+      const listener = (delta) => {
+        if (delta.id !== downloadId || !delta.state) return;
+        if (delta.state.current === 'complete') finish({ state: 'complete' });
+        if (delta.state.current === 'interrupted') finish({ state: 'interrupted', error: delta.error && delta.error.current });
+      };
+      chrome.downloads.onChanged.addListener(listener);
+      chrome.downloads.search({ id: downloadId }).then(([item]) => {
+        if (item && item.state === 'complete') finish({ state: 'complete' });
+        if (item && item.state === 'interrupted') finish({ state: 'interrupted', error: item.error });
+      }).catch(() => {});
+    });
+  }
+
+  // ZIP을 저장하고 결과를 알린다. 취소하면 조용히 알리고 '최근 ZIP'도 바꾸지 않는다.
+  async function saveZip(archive, filename, kind) {
+    const url = URL.createObjectURL(archive);
+    try {
+      const downloadId = await chrome.downloads.download({ url, filename, saveAs: true });
+      setMessage('저장할 위치를 고르세요…');
+      const result = await waitForDownload(downloadId);
+      if (result.state === 'interrupted') {
+        if (result.error === 'USER_CANCELED') {
+          setMessage('저장을 취소했습니다.');
+          return false;
+        }
+        throw new Error(`파일을 저장하지 못했습니다(${result.error || '알 수 없는 오류'}).`);
+      }
+      await rememberExport(downloadId, filename, kind);
+      return true;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   async function exportReport() {
     await saveReport();
     const { entries, manifest } = buildExportEntries();
     setMessage(`ZIP 생성 중 · ${entries.length}개 파일 처리`);
     const archive = await CaptureITZip.writeZip(entries);
-    const url = URL.createObjectURL(archive);
-    const filename = `CaptureIT/${report.id}-qa-result.zip`;
-    try {
-      const downloadId = await chrome.downloads.download({ url, filename, saveAs: true });
-      await rememberExport(downloadId, filename, 'report');
-      setMessage(`ZIP 생성 완료 · ${manifest.summary.total}개 테스트케이스 · ${manifest.overallStatus}`);
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    if (await saveZip(archive, exportFilename('QA결과'), 'report')) {
+      setMessage(`ZIP 저장 완료 · ${manifest.summary.total}개 테스트케이스 · ${manifest.overallStatus}`);
     }
-    requestReportDraftSuggestion().catch(() => {});
   }
 
   async function exportEvidenceOnly() {
@@ -2829,14 +3088,8 @@
     if (manifest.totalEvidence === 0) throw new Error('내보낼 증적이 없습니다.');
     setMessage(`증적 ZIP 생성 중 · ${entries.length}개 파일 처리`);
     const archive = await CaptureITZip.writeZip(entries);
-    const url = URL.createObjectURL(archive);
-    const filename = `CaptureIT/${report && report.id || 'captureit'}-evidence-only.zip`;
-    try {
-      const downloadId = await chrome.downloads.download({ url, filename, saveAs: true });
-      await rememberExport(downloadId, filename, 'evidence-only');
-      setMessage(`증적 ZIP 생성 완료 · ${manifest.totalEvidence}개 증적`);
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    if (await saveZip(archive, exportFilename('증적'), 'evidence-only')) {
+      setMessage(`증적 ZIP 저장 완료 · ${manifest.totalEvidence}개 증적`);
     }
   }
 
@@ -2894,19 +3147,12 @@
   // 테스트케이스 필드(제목/설명/기대결과/실제결과)는 각 카드가 자체 change 리스너로
   // saveFeatureTitle/saveFeatureDescription/saveFeatureExpectedResult/saveFeatureActualResult를
   // 직접 호출하므로, 여기서는 보고서 식별 정보 입력만 바인딩한다.
-  function bindInputs() {
-    for (const input of [
-      elements.reportTitle,
-      elements.projectName,
-      elements.reportAuthor,
-      elements.changePurpose,
-      elements.changeSummary,
-      elements.configurationOverview,
-    ]) input.addEventListener('change', updateReportFromInputs);
-  }
+  // 보고서 정보 입력란은 "프로젝트로 저장" 대화상자 안에 있다. 칸마다 바로 저장하면 취소를 눌러도
+  // 이미 저장돼 있었으므로, 제출할 때만 반영하고 취소하면 원래 값으로 되돌린다.
+  function bindInputs() {}
 
   async function refreshEvidence() {
-    const evidence = await CaptureITStorage.listEvidence();
+    const evidence = await loadReportEvidence();
     editorState = CaptureITDomain.createEditorState(evidence, editorState.features);
     renderEvidence();
     renderWarnings();
@@ -2929,10 +3175,12 @@
       'llmModel',
       'llmTemplate',
       'preferredReportTemplate',
+      'llmReady',
     ]);
     session = stored.captureSession || null;
     lastExport = stored.lastExport || null;
     preferredTemplate = stored.preferredReportTemplate || null;
+    llmReady = Boolean(stored.llmReady);
     elements.llmAdapter.value = stored.llmAdapter || 'nh-ai-gateway';
     elements.llmApiKey.value = stored.llmApiKey || '';
     elements.llmEndpoint.value = stored.llmEndpoint || CaptureITLlm.DEFAULT_ENDPOINT;
@@ -2951,7 +3199,7 @@
     if (reports.length === 0) {
       // Requirement 1: 캡처 우선 진입 - 저장된 report가 없으면 진입 즉시 report를 강제로 만들지 않는다.
       report = null;
-      const evidence = await CaptureITStorage.listEvidence();
+      const evidence = await loadReportEvidence();
       editorState = CaptureITDomain.createEditorState(evidence, []);
       currentFeatureId = null;
       renderAll();
@@ -2968,7 +3216,22 @@
   elements.deleteReport.addEventListener('click', () => removeReport().catch((error) => setMessage(error.message, true)));
   elements.addFeature.addEventListener('click', () => addFeature().catch((error) => setMessage(error.message, true)));
   elements.toggleSession.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
-  elements.imageImport.addEventListener('change', () => importImages([...elements.imageImport.files], 'file').catch((error) => setMessage(error.message, true)));
+  elements.imageImport.addEventListener('change', () => {
+    const files = [...elements.imageImport.files];
+    elements.imageImport.value = '';
+    importImages(files, 'file').catch((error) => setMessage(error.message, true));
+  });
+  // "기존 이미지 불러오기"는 파일 입력을 감싼 label이라 키보드로 닿지 않았다.
+  const importLabel = document.querySelector('.file-button');
+  if (importLabel) {
+    importLabel.tabIndex = 0;
+    importLabel.setAttribute('role', 'button');
+    importLabel.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      elements.imageImport.click();
+    });
+  }
   // 붙여넣기와 파일 끌어다 놓기는 작업대 전체에서 받는다(단계와 무관).
   document.addEventListener('paste', handlePaste);
   document.addEventListener('dragover', (event) => {
@@ -3050,7 +3313,10 @@
     renderReportFields();
     elements.saveProjectDialog.showModal();
   });
-  elements.cancelSaveProject.addEventListener('click', () => elements.saveProjectDialog.close());
+  elements.cancelSaveProject.addEventListener('click', () => {
+    renderReportFields();
+    elements.saveProjectDialog.close();
+  });
   elements.saveProjectDialog.querySelector('form').addEventListener('submit', (event) => {
     event.preventDefault();
     submitSaveAsProject().catch((error) => setMessage(`프로젝트 저장 실패: ${error.message}`, true));
@@ -3061,6 +3327,7 @@
   });
   elements.approveDraftSuggestion.addEventListener('click', () => approveDraftSuggestion().catch((error) => setMessage(error.message, true)));
   elements.cancelQuickMapping.addEventListener('click', () => elements.quickMappingDialog.close());
+  elements.quickMappingFeature.addEventListener('change', fillQuickMappingFields);
   elements.quickMappingDialog.querySelector('form').addEventListener('submit', (event) => {
     event.preventDefault();
     submitQuickMapping().catch((error) => setMessage(`빠른 매핑 실패: ${error.message}`, true));
@@ -3068,7 +3335,8 @@
   const persistLlmSettings = async () => {
     try {
       await saveLlmSettings();
-      setMessage(`LLM 설정 저장: ${llmAllowedOrigins[0]}`);
+      await setLlmReady(false);
+      setMessage(`AI 설정을 저장했습니다. 연결 테스트를 눌러 확인하면 자동 AI 기능이 켜집니다.`);
     } catch (error) {
       setMessage(`LLM 설정 실패: ${error.message}`, true);
     }
@@ -3095,6 +3363,15 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
       if (message && message.type === 'EVIDENCE_CREATED') refreshEvidence().catch(() => {});
+      // 녹화 중인 탭을 닫아 녹화가 끝난 경우 등, 편집기 밖에서 녹화 상태가 바뀌면 다시 읽는다.
+      if (message && message.type === 'SESSION_CHANGED') {
+        extensionStorage.get('captureSession').then((stored) => {
+          session = stored.captureSession || null;
+          renderSession();
+          renderStage();
+          if (message.reason === 'tab-closed') setMessage('녹화 중인 탭이 닫혀 녹화를 종료했습니다.');
+        }).catch(() => {});
+      }
     });
   }
 

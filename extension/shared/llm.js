@@ -101,12 +101,13 @@
     };
   }
 
-  function buildReportDraftRequest(report, mappedEvidenceByFeature) {
+  // 테스트케이스마다 이미지를 몇 장까지만 보낸다. 다 보내면 큰 보고서에서 LLM 입력 한도를 넘었다.
+  function buildReportDraftRequest(report, mappedEvidenceByFeature, { maxImagesPerFeature = 3 } = {}) {
     return {
       task: 'Draft a report title and a configuration/checkout overview in Korean from the mapped evidence image sequence and context. Do not judge PASS or FAIL.',
       features: mappedEvidenceByFeature.map(({ feature, evidence }) => ({
         feature,
-        evidence: orderedEvidence(evidence).map((item) => {
+        evidence: orderedEvidence(evidence).slice(0, Math.max(1, maxImagesPerFeature)).map((item) => {
           if (!item.thumbnailDataUrl) throw new Error(`Missing thumbnail: ${item.id}`);
           return { ...evidenceContext(item), image: item.thumbnailDataUrl };
         }),

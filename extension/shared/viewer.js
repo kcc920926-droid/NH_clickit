@@ -48,8 +48,13 @@
       .replaceAll("'", '&#39;');
   }
 
+  // report.js가 Markdown 특수문자 앞에 붙인 역슬래시를 화면에 그대로 보이지 않게 지운다.
+  function unescapeMarkdown(text) {
+    return String(text).replace(/\\([\\`*_{}\[\]()#+\-.!|>~])/g, '$1');
+  }
+
   function renderMarkdown(markdown) {
-    const lines = String(markdown).split(/\r?\n/);
+    const lines = String(markdown).split(/\r?\n/).map(unescapeMarkdown);
     return lines.map((line) => {
       const image = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(line);
       if (image) return `<p><img alt="${escapeHtml(image[1])}" src="${escapeHtml(image[2])}"></p>`;

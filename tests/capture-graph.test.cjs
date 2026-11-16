@@ -139,7 +139,7 @@ test('renderEvidence는 매핑된 증적도 포함해 Capture_Graph 노드를 �
 
   assert.match(
     renderEvidenceBody,
-    /const evidenceItems = editorState\.evidence\.filter/,
+    /CaptureITDomain\.groupIntoCaptureSessionSets\(editorState\.evidence\)/,
     '증적 확인 화면은 inbox만이 아니라 전체 evidence에서 그래프를 구성해야 합니다',
   );
   assert.doesNotMatch(

@@ -43,11 +43,21 @@
       || '';
   }
 
+  // 녹화와 붙여넣기처럼 순번이 따로 매겨진 묶음이 섞여도 실제 순서대로 놓이도록, 수집 시각이 있으면
+  // 그것을 먼저 보고 같은 묶음 안에서는 순번으로 정렬한다.
   function sortEvidence(evidenceList) {
-    return [...evidenceList].sort((left, right) =>
-      Number(left.sequenceNo ?? 0) - Number(right.sequenceNo ?? 0)
-      || String(left.id).localeCompare(String(right.id)),
-    );
+    const timeOf = (item) => {
+      const value = Date.parse(item && item.capturedAt);
+      return Number.isFinite(value) ? value : null;
+    };
+    return [...evidenceList].sort((left, right) => {
+      const sameSession = left.sessionId && left.sessionId === right.sessionId;
+      const leftTime = timeOf(left);
+      const rightTime = timeOf(right);
+      if (!sameSession && leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+      return Number(left.sequenceNo ?? 0) - Number(right.sequenceNo ?? 0)
+        || String(left.id).localeCompare(String(right.id));
+    });
   }
 
   function startGroup(evidence, stepType) {

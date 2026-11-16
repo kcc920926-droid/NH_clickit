@@ -117,12 +117,32 @@
     const createCanvas = dependencies.createCanvas || defaultCreateCanvas;
     const image = await loadImage(sourceImageDataUrl);
     const { x, y, width, height } = selection.region;
-    const canvas = createCanvas(width, height);
-    canvas.width = width;
-    canvas.height = height;
+    // 캡처 이미지는 기기 픽셀, 자를 영역은 CSS 픽셀이다. 고해상도 화면(레티나, Windows 125~150%)에서
+    // 엉뚱한 곳이 잘리지 않도록 이미지 실제 크기와 뷰포트 크기의 비율로 맞춘다.
+    const viewport = normalizeViewport(dependencies.viewport);
+    const naturalWidth = Number(image && (image.naturalWidth || image.width)) || 0;
+    const naturalHeight = Number(image && (image.naturalHeight || image.height)) || 0;
+    const scaleX = naturalWidth && viewport.width ? naturalWidth / viewport.width : 1;
+    const scaleY = naturalHeight && viewport.height ? naturalHeight / viewport.height : scaleX;
+    let sourceX = Math.round(x * scaleX);
+    let sourceY = Math.round(y * scaleY);
+    let sourceWidth = Math.round(width * scaleX);
+    let sourceHeight = Math.round(height * scaleY);
+    if (naturalWidth && naturalHeight) {
+      sourceX = clamp(sourceX, 0, Math.max(0, naturalWidth - 1));
+      sourceY = clamp(sourceY, 0, Math.max(0, naturalHeight - 1));
+      sourceWidth = Math.min(sourceWidth, naturalWidth - sourceX);
+      sourceHeight = Math.min(sourceHeight, naturalHeight - sourceY);
+    }
+    // 자를 영역이 비면(창 크기 0 등) 빈 이미지("data:,") 대신 원본을 그대로 쓴다.
+    if (!(sourceWidth >= 1 && sourceHeight >= 1)) return sourceImageDataUrl;
+    const canvas = createCanvas(sourceWidth, sourceHeight);
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
     const context = canvas.getContext('2d');
-    context.drawImage(image, x, y, width, height, 0, 0, width, height);
-    return canvas.toDataURL('image/jpeg', 0.82);
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+    const result = canvas.toDataURL('image/jpeg', 0.82);
+    return result && result !== 'data:,' ? result : sourceImageDataUrl;
   }
 
   function hasBbox(context) {

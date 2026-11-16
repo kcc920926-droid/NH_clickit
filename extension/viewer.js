@@ -36,6 +36,11 @@
       else image.removeAttribute('src');
     }
     for (const link of parsed.querySelectorAll('a[href]')) link.removeAttribute('href');
+    // 받은 ZIP의 HTML이 외부 주소를 불러오지 못하게 한다(<link>, CSS url()).
+    for (const external of parsed.querySelectorAll('link')) external.remove();
+    const stripUrls = (css) => String(css).replace(/url\(\s*(['"]?)(?!data:)[^)]*\)/gi, 'none');
+    for (const style of parsed.querySelectorAll('style')) style.textContent = stripUrls(style.textContent);
+    for (const element of parsed.querySelectorAll('[style]')) element.setAttribute('style', stripUrls(element.getAttribute('style')));
     return `<!doctype html>${parsed.documentElement.outerHTML}`;
   }
 
@@ -44,6 +49,14 @@
     const entries = await CaptureITZip.readZip(file);
     if (!entries.has('manifest.json')) throw new Error('manifest.json이 없습니다.');
     const manifest = JSON.parse(decoder.decode(entries.get('manifest.json')));
+    // CaptureIT의 '증적만 ZIP'은 보고서가 아니라 증적 목록(evidence-index.html)을 연다.
+    if (manifest.kind === 'evidence-only' || (!manifest.schemaVersion && entries.has('evidence-index.html'))) {
+      frame.srcdoc = safeDocument(decoder.decode(entries.get('evidence-index.html')), entries);
+      frame.hidden = false;
+      emptyState.hidden = true;
+      message.textContent = `${file.name} · 증적 묶음 읽기 전용 표시`;
+      return;
+    }
     CaptureITViewer.validatePackage(manifest, new Set(entries.keys()));
     const entry = CaptureITViewer.chooseEntry(new Set(entries.keys()));
     if (!entry) throw new Error('report.html 또는 report.md가 없습니다.');
