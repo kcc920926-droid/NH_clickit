@@ -1,6 +1,6 @@
 {
   "name": "captureit",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "private": true,
   "description": "Closed-network Edge extension for ordered QA evidence capture and reporting",
   "scripts": {

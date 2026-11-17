@@ -109,6 +109,7 @@
     purposeStart: byId('purpose-start'),
     purposeOptions: byId('purpose-options'),
     stopRecordingBar: byId('stop-recording-bar'),
+    nextSceneBar: byId('next-scene-bar'),
     statusBar: document.querySelector('.status-bar'),
     captureSettingsDialog: byId('capture-settings-dialog'),
     openCaptureSettings: byId('open-capture-settings'),
@@ -159,6 +160,7 @@
     // 대각선을 하나 더 그어(link-off) "연결이 끊긴" 상태를 나타낸다.
     'link-off': 'M10 13a5 5 0 0 1 0-7l1.5-1.5a5 5 0 0 1 7 7L17 13M14 11a5 5 0 0 1 0 7l-1.5 1.5a5 5 0 0 1-7-7L7 11M4 4l16 16',
     plus: 'M12 5v14M5 12h14',
+    scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12',
     target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z',
     trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15',
     // LLM 추천 세트 제목 버튼용 4각 스파클 아이콘. 다른 아이콘들과 동일하게 단일 path, 최소한의
@@ -229,6 +231,18 @@
   const aiPipelines = new Map();
   const aiPipelineClearTimers = new Map();
   // 펼쳐 둔 증적 세트(sessionId). 다시 그려도 펼친 상태를 유지한다.
+  // 연결 구조를 바꾸는 일과 증적 새로 읽기를 한 줄로 세운다. 녹화 중에 "다음 장면"을 누르는 사이
+  // 새 사진이 들어와 증적을 다시 읽으면, 아직 저장하지 못한 연결이 지워질 수 있다.
+  let stateChain = Promise.resolve();
+  function serial(task) {
+    const run = stateChain.then(task, task);
+    stateChain = run.catch(() => {});
+    return run;
+  }
+  // "사진 골라서 옮기기·삭제"를 켰을 때만 사진에 고르기 상자가 보인다.
+  let pickMode = false;
+  // 녹화 중 "다음 장면"을 누른 녹화. 이런 녹화는 끝날 때 화면별로 다시 나누지 않고 남은 사진을 한 항목으로 묶는다.
+  const sceneMarkedSessions = new Set();
   const expandedSessions = new Set();
   const collapsedSessions = new Set();
   // 녹화 대상 탭에서 콘텐츠 스크립트가 응답했는지(IE 모드 탭 등은 응답하지 않는다).
@@ -401,6 +415,10 @@
     elements.toggleSession.classList.toggle('is-recording', active);
     // 아래 상태 줄의 종료 버튼: 수집 줄이 스크롤로 가려져도 늘 보인다.
     elements.stopRecordingBar.hidden = !active;
+    // 녹화 중 "다음 장면": 지금까지 찍은 화면을 한 항목으로 묶어 두면, 끝난 뒤 연결할 것이 없다.
+    elements.nextSceneBar.hidden = !active;
+    elements.nextSceneBar.textContent = `다음 ${itemWord()}`;
+    elements.nextSceneBar.title = `지금까지 찍은 화면을 한 ${itemWord('으로/로')} 묶습니다. 이제부터 찍히는 화면은 다음 ${itemWord('으로/로')} 모입니다.`;
     elements.statusBar.classList.toggle('is-recording', active);
     renderPrimaryAction();
     elements.captureMode.disabled = starting || active;
@@ -796,7 +814,7 @@
     // Feature_Spec 매핑 안내 (요구사항 8.2, 8.3): 매핑된 Evidence가 없으면 매핑 유도 문구를,
     // 있으면 다음 입력 행동(기대 결과/실제 결과/판정)을 안내한다.
     if (feature.result.evidenceIds.length === 0) {
-      elements.featureMappingGuidance.textContent = `증적 수집함에서 세트의 "연결 ▾"나 고른 사진의 "연결 ▾"를 누르고 이 ${itemWord('을/를')} 고르세요.`;
+      elements.featureMappingGuidance.textContent = `증적 수집함에서 사진의 "여기부터"를 누르면 그 사진부터 빈 ${itemWord()}에 차례로 담깁니다. 떨어져 있는 사진은 세트 ⋯ → "사진 골라서 옮기기"로 옮기세요.`;
     } else {
       elements.featureMappingGuidance.textContent = '기대 결과/실제 결과를 입력하거나 판정을 확인하세요.';
     }
@@ -1038,7 +1056,7 @@
         const already = ids.every((id) => (editorState.evidence.find((item) => item.id === id) || {}).featureSpecId === feature.id);
         const label = [`${index + 1}. ${feature.title || untitledItem()}`];
         if (already) label.push(Object.assign(document.createElement('span'), { className: 'link-menu-note', textContent: ' ✓ 연결됨' }));
-        items.push(entry(label, () => mapEvidenceIdsWithConfirm(ids, feature), feature.id === currentFeatureId ? 'is-current' : ''));
+        items.push(entry(label, () => mapEvidenceIdsWithUndo(ids, feature), feature.id === currentFeatureId ? 'is-current' : ''));
       });
       items.push(entry(`＋ 새 ${itemWord()}로 만들어 연결`, () => linkToNewFeature(ids), 'link-menu-new'));
       if (options.group) {
@@ -1076,38 +1094,105 @@
   // 새 항목을 만들어 연결한다. 이름은 첫 화면의 제목으로 지어 둔다(나중에 바꾸면 된다).
   async function linkToNewFeature(evidenceIds) {
     const parts = splitPartsFor(evidenceIds);
-    const title = parts.length ? parts[0].title : `새 ${itemWord()}`;
+    const title = CaptureITSegments.uniqueTitle(parts.length ? parts[0].title : `새 ${itemWord()}`, editorState.features.map((item) => item.title));
     const feature = CaptureITDomain.addFeature(editorState, title);
+    feature.autoTitle = feature.title;
     currentFeatureId = feature.id;
     await mapEvidenceIds(evidenceIds, feature);
-    setNarrowPane('features');
     setMessage(`'${feature.title}'${CaptureITDocumentTypes.josa(feature.title, '을/를').slice(feature.title.length)} 만들어 증적 ${evidenceIds.length}장을 연결했습니다. 이름은 바꿔도 됩니다.`);
   }
 
-  // 녹화 세트를 화면마다 나눠 항목을 하나씩 만들고 연결한다. 이미 다른 곳에 연결된 증적은 그대로 둔다.
+  // 사진들을 화면이 바뀐 곳에서 나눠 차례로 항목에 붙인다. 빈 항목부터 채우고 모자라면 새로 만든다.
+  // 이미 다른 곳에 연결된 증적은 그대로 둔다.
   // AI 자동 작성은 한꺼번에 돌리지 않는다(분당 한도). 필요한 항목에서 AI 버튼을 누르면 된다.
-  async function splitIntoFeatures(evidenceIds) {
-    const free = evidenceIds.filter((id) => !(editorState.evidence.find((item) => item.id === id) || {}).featureSpecId);
-    const parts = splitPartsFor(free.length ? free : evidenceIds);
-    if (free.length === 0) {
-      setMessage('이 세트의 증적은 모두 이미 연결돼 있습니다. 먼저 ⋯ → 세트 연결 해제를 하세요.', true);
-      return;
-    }
-    let firstId = null;
-    for (const part of parts) {
-      const feature = CaptureITDomain.addFeature(editorState, part.title);
-      firstId = firstId || feature.id;
-      CaptureITDomain.mapEvidenceBatch(editorState, part.evidenceIds, feature.id);
-    }
-    await persistMappedEvidence(free);
-    currentFeatureId = firstId;
-    await saveReport();
-    renderEvidence();
-    renderFeatures();
-    renderFeature();
-    renderWorkspace();
-    setNarrowPane('features');
-    setMessage(`화면별로 나눠 ${itemWord()} ${parts.length}개를 만들고 연결했습니다. 이름을 다듬고 판정하세요.`);
+  // options.auto: 녹화가 끝나 자동으로 나누는 경우(주소를 모르는 사진은 쪼개지 않는다).
+  // options.oneScene: 나누지 않고 한 항목으로 묶는다(녹화 중 "다음 장면"으로 이미 끊은 경우).
+  // options.afterFeatureId: 이 항목 뒤부터 채운다. options.message(assigned): 끝난 뒤 보여 줄 말.
+  function splitIntoFeatures(evidenceIds, options = {}) {
+    return serial(async () => {
+      const free = evidenceItems(evidenceIds).filter((item) => !item.featureSpecId)
+        .sort((left, right) => Number(left.sequenceNo || 0) - Number(right.sequenceNo || 0));
+      if (free.length === 0) {
+        if (!options.auto) setMessage('이 세트의 증적은 모두 이미 연결돼 있습니다. 먼저 ⋯ → 세트 연결 해제를 하세요.', true);
+        return null;
+      }
+      const parts = options.oneScene
+        ? [{ title: CaptureITEvidenceSplit.screenTitle(free), evidenceIds: free.map((item) => item.id) }]
+        : CaptureITEvidenceSplit.splitByScreen(free, { unknownTogether: Boolean(options.auto) });
+      const saved = CaptureITSegments.snapshot(editorState);
+      const assigned = CaptureITSegments.assignParts(editorState, parts, { afterFeatureId: options.afterFeatureId || null });
+      const message = options.message
+        ? options.message(assigned, free.length)
+        : `화면별로 나눠 ${itemWord()} ${assigned.length}개에 연결했습니다. 더 나눌 곳은 사진의 "여기부터", 잘못 나뉜 곳은 "위와 합치기"를 누르세요.`;
+      await commitLinkChange(saved, message, assigned[0].feature.id);
+      return assigned;
+    });
+  }
+
+  // 한 녹화에서 아직 연결 안 된 사진(순번 순서).
+  function sessionFreshEvidence(sessionId) {
+    return editorState.evidence
+      .filter((item) => item.sessionId === sessionId && !item.featureSpecId)
+      .sort((left, right) => Number(left.sequenceNo || 0) - Number(right.sequenceNo || 0));
+  }
+
+  // 한 녹화에서 마지막으로 연결된 사진의 항목. 새로 묶는 항목은 그 뒤에 온다.
+  function lastLinkedFeatureId(sessionId) {
+    const linked = editorState.evidence
+      .filter((item) => item.sessionId === sessionId && item.featureSpecId)
+      .sort((left, right) => Number(right.sequenceNo || 0) - Number(left.sequenceNo || 0))[0];
+    return linked ? linked.featureSpecId : null;
+  }
+
+  // 녹화가 끝나면 방금 찍은(아직 연결 안 된) 사진을 화면이 바뀐 곳에서 나눠 항목에 붙여 둔다.
+  // 녹화 중 "다음 장면"을 눌렀던 녹화는 남은 사진을 마지막 한 항목으로 묶는다. 연결한 것이 있으면 true.
+  async function autoLinkStoppedSession(sessionId) {
+    if (!sessionId) return false;
+    const fresh = sessionFreshEvidence(sessionId);
+    const marked = sceneMarkedSessions.delete(sessionId);
+    if (fresh.length === 0) return false;
+    const assigned = await splitIntoFeatures(fresh.map((item) => item.id), {
+      auto: true,
+      oneScene: marked,
+      afterFeatureId: lastLinkedFeatureId(sessionId),
+      message: (list, count) => {
+        const first = list[0].feature.title || untitledItem();
+        if (marked) return `녹화를 끝내고 남은 ${count}장을 '${first}'에 묶었습니다.`;
+        if (list.length === 1) return `녹화한 ${count}장을 '${first}'에 연결했습니다. 나눌 곳이 있으면 그 사진의 "여기부터"를 누르세요.`;
+        return `녹화를 끝내고 화면이 바뀐 곳에서 나눠 ${itemWord()} ${list.length}개에 연결했습니다. 더 나눌 곳은 사진의 "여기부터", 잘못 나뉜 곳은 "위와 합치기"를 누르세요.`;
+      },
+    });
+    return Boolean(assigned);
+  }
+
+  // 녹화 중 "다음 장면": 지금까지 찍은(아직 연결 안 된) 화면을 한 항목으로 묶는다. 이제부터 찍히는 화면은 다음 항목으로 모인다.
+  function markNextScene() {
+    return serial(async () => {
+      if (!(session && session.active)) return;
+      await refreshEvidenceNow();
+      const sessionId = session.id;
+      sceneMarkedSessions.add(sessionId);
+      const fresh = sessionFreshEvidence(sessionId);
+      if (fresh.length === 0) {
+        // 수집 대상을 정해 두면 찍는 대로 그 항목에 붙으므로 묶을 것이 없다. 그 항목을 여기서 끝낸다.
+        const target = captureTargetFeature();
+        if (target) {
+          report.captureTargetFeatureId = null;
+          await saveReport();
+          renderFeatures();
+          renderWorkspace();
+          setMessage(`'${target.title || untitledItem()}'에 모으기를 마쳤습니다. 이제부터 찍히는 화면은 다음 ${itemWord('으로/로')} 모입니다.`);
+          return;
+        }
+        setMessage(`아직 새로 찍힌 화면이 없습니다. 화면을 조작한 뒤 "다음 ${itemWord()}"${CaptureITDocumentTypes.josa(itemWord(), '을/를').slice(itemWord().length)} 누르세요.`);
+        return;
+      }
+      const saved = CaptureITSegments.snapshot(editorState);
+      const [done] = CaptureITSegments.assignParts(editorState,
+        [{ title: CaptureITEvidenceSplit.screenTitle(fresh), evidenceIds: fresh.map((item) => item.id) }],
+        { afterFeatureId: lastLinkedFeatureId(sessionId) });
+      await commitLinkChange(saved, `'${done.feature.title || untitledItem()}'에 ${fresh.length}장을 묶었습니다. 이제부터 찍히는 화면은 다음 ${itemWord('으로/로')} 모입니다.`, done.feature.id);
+    });
   }
 
   // Quick_Mapping_Dialog: Capture_Graph/Capture_Node를 더블클릭하면 대상 evidenceIds를 기억해 두고
@@ -1196,7 +1281,8 @@
     return context.pageTitle || '화면 확인';
   }
 
-  function captureNode(evidence, sequenceEvidenceIds = [evidence.id]) {
+  // split: 이 사진부터 나눌 수 있으면 { evidenceIds, target }(CaptureITSegments.previewSplit), 없으면 null.
+  function captureNode(evidence, sequenceEvidenceIds = [evidence.id], split = null) {
     const node = document.createElement('article');
     node.className = 'capture-node';
     node.dataset.evidenceId = evidence.id;
@@ -1243,29 +1329,181 @@
       // 매핑된 노드는 옅은 파란색(inactive)으로 구분한다. 아무 테스트케이스도 선택되지 않았으면
       // "직접 연관"이 없으므로 전부 inactive로 표시한다.
       node.classList.add(currentFeatureId && evidence.featureSpecId === currentFeatureId ? 'active' : 'inactive');
-      const badge = document.createElement('span');
-      badge.className = 'capture-node-mapping-badge';
-      badge.textContent = mappedTitle;
-      node.append(badge);
+      // 어느 항목인지는 구획 머리줄(번호 + 이름)이 보여 주므로 사진마다 다시 쓰지 않는다.
     }
     const nodeFooter = document.createElement('div');
     nodeFooter.className = 'capture-node-footer';
-    // 사진 한 장씩 연결하는 버튼 대신 고르기 상자를 둔다. 여러 장을 골라 위의 "선택한 N장 → 연결 ▾"로 한 번에 붙인다.
-    const pick = document.createElement('label');
-    pick.className = 'node-pick';
-    pick.title = '골라서 여러 장을 한 번에 연결·삭제';
-    const pickInput = Object.assign(document.createElement('input'), { type: 'checkbox', checked: selectedEvidenceIds.has(evidence.id) });
-    pickInput.setAttribute('aria-label', `${evidenceStepLabel(evidence)} 고르기`);
-    pickInput.addEventListener('click', (event) => event.stopPropagation());
-    pickInput.addEventListener('change', () => toggleEvidenceSelection(evidence.id, pickInput.checked));
-    pick.append(pickInput, '고르기');
+    // 여기부터: 이 사진부터 구획 끝까지를 다음 항목으로 나눈다. 사진마다 붙일 곳을 고르는 대신 끊는 자리만 누른다.
+    // (구획의 첫 사진은 나눌 것이 없어 버튼이 없다.)
+    if (split && !pickMode) {
+      const cut = document.createElement('button');
+      cut.type = 'button';
+      cut.className = 'text-button cut-here';
+      cut.replaceChildren(iconSvg('scissors'), '여기부터');
+      cut.title = split.target
+        ? `이 사진부터 ${split.evidenceIds.length}장을 비어 있는 '${split.target.title || untitledItem()}'에 연결합니다`
+        : `이 사진부터 ${split.evidenceIds.length}장을 새 ${itemWord('으로/로')} 나눕니다`;
+      cut.setAttribute('aria-label', `${evidenceStepLabel(evidence)}: ${cut.title}`);
+      cut.addEventListener('click', (event) => {
+        event.stopPropagation();
+        splitHere(evidence.id, sequenceEvidenceIds).catch((error) => setMessage(error.message, true));
+      });
+      nodeFooter.append(cut);
+    }
+    // 고르기 상자는 세트 ⋯ → "사진 골라서 옮기기·삭제"를 켰을 때만 보인다(떨어져 있는 사진을 다른 항목으로 옮길 때).
+    if (pickMode) {
+      const pick = document.createElement('label');
+      pick.className = 'node-pick';
+      pick.title = '골라서 여러 장을 한 번에 옮기거나 삭제';
+      const pickInput = Object.assign(document.createElement('input'), { type: 'checkbox', checked: selectedEvidenceIds.has(evidence.id) });
+      pickInput.setAttribute('aria-label', `${evidenceStepLabel(evidence)} 고르기`);
+      pickInput.addEventListener('click', (event) => event.stopPropagation());
+      pickInput.addEventListener('change', () => toggleEvidenceSelection(evidence.id, pickInput.checked));
+      pick.append(pickInput, '고르기');
+      nodeFooter.append(pick);
+    }
     node.classList.toggle('picked', selectedEvidenceIds.has(evidence.id));
-    nodeFooter.append(
-      pick,
-      iconButton('증적 삭제', 'trash', () => removeEvidence(evidence.id), false, 'danger'),
-    );
+    nodeFooter.append(iconButton('증적 삭제', 'trash', () => removeEvidence(evidence.id), false, 'danger'));
     node.append(nodeFooter);
     return node;
+  }
+
+  // 세트 안의 한 구획. 연결된 구획은 "번호 · 이름(바로 고침) · N장 · 위와 합치기", 연결 안 된 구획은 "연결 ▾".
+  function sceneSegment(run, index, segments, group, items) {
+    const feature = run.featureId ? editorState.features.find((item) => item.id === run.featureId) || null : null;
+    const section = document.createElement('section');
+    section.className = `scene-seg ${feature ? 'linked' : 'unlinked'}`;
+    if (feature) {
+      section.dataset.featureId = feature.id;
+      section.classList.toggle('active', feature.id === currentFeatureId);
+    }
+    const head = document.createElement('div');
+    head.className = 'scene-seg-head';
+    if (feature) {
+      const number = document.createElement('button');
+      number.type = 'button';
+      number.className = 'scene-seg-no';
+      number.textContent = String(editorState.features.indexOf(feature) + 1);
+      number.title = `${itemWord('을/를')} 열어 설명${docType().verdict ? '과 판정' : ''}을 씁니다`;
+      number.setAttribute('aria-label', `${itemWord()} ${number.textContent} 열기`);
+      number.addEventListener('click', (event) => { event.stopPropagation(); openFeatureFromSegment(feature.id); });
+      const title = document.createElement('input');
+      title.type = 'text';
+      title.className = 'scene-seg-title';
+      title.value = feature.title || '';
+      title.placeholder = `${itemWord()} 이름`;
+      title.setAttribute('aria-label', `${itemWord()} 이름`);
+      for (const type of ['mousedown', 'click', 'dblclick']) title.addEventListener(type, (event) => event.stopPropagation());
+      title.addEventListener('keydown', (event) => { if (event.key === 'Enter') title.blur(); });
+      title.addEventListener('change', () => saveFeatureTitle(feature, title.value));
+      head.append(number, title);
+    } else {
+      head.append(Object.assign(document.createElement('strong'), { className: 'scene-seg-label', textContent: '아직 연결 안 됨' }));
+    }
+    head.append(Object.assign(document.createElement('span'), { className: 'scene-seg-count', textContent: `${run.evidenceIds.length}장` }));
+    if (index > 0) {
+      const upper = segments[index - 1];
+      const upperFeature = upper.featureId ? editorState.features.find((item) => item.id === upper.featureId) : null;
+      const merge = document.createElement('button');
+      merge.type = 'button';
+      merge.className = 'text-button scene-merge';
+      merge.textContent = '↑ 위와 합치기';
+      merge.title = upperFeature
+        ? `이 ${run.evidenceIds.length}장을 위의 '${upperFeature.title || untitledItem()}'에 합칩니다`
+        : `위의 연결 안 된 ${upper.evidenceIds.length}장을 이 ${itemWord()}에 넣습니다`;
+      merge.addEventListener('click', (event) => {
+        event.stopPropagation();
+        mergeSegmentUp(run.evidenceIds[0], group.evidenceIds).catch((error) => setMessage(error.message, true));
+      });
+      head.append(merge);
+    }
+    // 연결 안 된 사진을 이미 있는 항목에 붙이거나 화면별로 나누려면 여기서 고른다.
+    if (!feature) head.append(linkTargetMenu(run.evidenceIds, { group }));
+    const nodes = document.createElement('div');
+    nodes.className = 'capture-graph-nodes';
+    const byId = new Map(items.map((item) => [item.id, item]));
+    nodes.append(...run.evidenceIds.map((id) => captureNode(byId.get(id), group.evidenceIds, CaptureITSegments.previewSplit(editorState, items, id))));
+    section.append(head, nodes);
+    return section;
+  }
+
+  function openFeatureFromSegment(featureId) {
+    currentFeatureId = featureId;
+    setNarrowPane('features');
+    renderFeatures();
+    renderFeature();
+    renderEvidence();
+    const card = elements.featureList.querySelector(`[data-feature-id="${featureId}"]`);
+    if (card) card.scrollIntoView({ block: 'nearest' });
+  }
+
+  function evidenceItems(evidenceIds) {
+    const wanted = new Set(evidenceIds);
+    return editorState.evidence.filter((item) => wanted.has(item.id));
+  }
+
+  // 연결 구조를 바꾼 일(나누기·합치기·자동 나누기·옮기기)의 공통 뒤처리:
+  // 바뀐 사진을 저장하고 다시 그린 뒤, 확인 창 대신 "되돌리기"를 건넨다.
+  async function commitLinkChange(saved, message, focusFeatureId = currentFeatureId) {
+    const changed = editorState.evidence
+      .filter((item) => (item.featureSpecId || null) !== (saved.links.get(item.id) || null))
+      .map((item) => item.id);
+    await persistMappedEvidence(changed);
+    const alive = new Set(editorState.features.map((feature) => feature.id));
+    currentFeatureId = alive.has(focusFeatureId) ? focusFeatureId : null;
+    if (report && report.captureTargetFeatureId && !alive.has(report.captureTargetFeatureId)) report.captureTargetFeatureId = null;
+    await saveReport();
+    renderEvidence();
+    renderFeatures();
+    renderFeature();
+    renderWorkspace();
+    setMessage(message, false, { label: '되돌리기', run: () => undoLinkChange(saved) });
+  }
+
+  function undoLinkChange(saved) {
+    return serial(async () => {
+      const changed = CaptureITSegments.restore(editorState, saved);
+      await persistMappedEvidence(changed);
+      if (!editorState.features.some((feature) => feature.id === currentFeatureId)) currentFeatureId = null;
+      await saveReport();
+      renderEvidence();
+      renderFeatures();
+      renderFeature();
+      renderWorkspace();
+      setMessage('되돌렸습니다.');
+    });
+  }
+
+  // 자동으로 만들어졌고 손대지 않은 항목이 비면 지운다(나눈 것을 풀었을 때 빈 항목이 남지 않게).
+  function dropBlankFeatures() {
+    const removed = CaptureITSegments.pruneBlank(editorState);
+    if (removed.some((feature) => feature.id === currentFeatureId)) currentFeatureId = null;
+    if (report && removed.some((feature) => feature.id === report.captureTargetFeatureId)) report.captureTargetFeatureId = null;
+    return removed;
+  }
+
+  // 나누기: 이 사진부터 구획 끝까지를 다음 항목(뒤에 있는 빈 항목, 없으면 새 항목)으로 보낸다.
+  function splitHere(evidenceId, setEvidenceIds) {
+    return serial(async () => {
+      const saved = CaptureITSegments.snapshot(editorState);
+      const done = CaptureITSegments.splitAt(editorState, evidenceItems(setEvidenceIds), evidenceId);
+      if (!done) return;
+      const title = done.feature.title || untitledItem();
+      await commitLinkChange(saved, done.created
+        ? `이 사진부터 ${done.evidenceIds.length}장을 새 ${itemWord()} '${title}'에 담았습니다. 이름은 바로 고칠 수 있습니다.`
+        : `이 사진부터 ${done.evidenceIds.length}장을 '${title}'에 연결했습니다.`, done.feature.id);
+    });
+  }
+
+  // 합치기: 이 구획을 바로 위 구획과 한 항목으로 만든다.
+  function mergeSegmentUp(evidenceId, setEvidenceIds) {
+    return serial(async () => {
+      const saved = CaptureITSegments.snapshot(editorState);
+      const done = CaptureITSegments.mergeUp(editorState, evidenceItems(setEvidenceIds), evidenceId);
+      if (!done) return;
+      const dropped = done.removed.length ? ` 비게 된 ${itemWord()} ${done.removed.length}개는 지웠습니다.` : '';
+      await commitLinkChange(saved, `'${done.feature.title || untitledItem()}'에 ${done.evidenceIds.length}장을 합쳤습니다.${dropped}`, done.feature.id);
+    });
   }
 
   function captureGraphCard(group, { forceExpand = false } = {}) {
@@ -1304,10 +1542,10 @@
 
     const headerActions = document.createElement('div');
     headerActions.className = 'capture-graph-header-actions';
-    // 자주 쓰는 "연결"만 밖에 두고, 가끔 쓰는 것(AI 제목, 연결 해제, 삭제)은 ⋯ 메뉴에 넣어 고를 것을 줄인다.
+    // 연결은 아래 구획에서 한다(사진의 "여기부터", 구획의 "위와 합치기"). 가끔 쓰는 것은 ⋯ 메뉴에 넣어 고를 것을 줄인다.
     headerActions.append(
-      linkTargetMenu(group.evidenceIds, { group }),
       overflowMenu('세트 메뉴', [
+        { label: '사진 골라서 옮기기·삭제', run: () => { pickMode = true; renderEvidence(); } },
         { label: 'AI로 제목 짓기', run: () => requestEvidenceGroupTitleSuggestion(group).catch((error) => setMessage(`제목 추천 실패: ${error.message}`, true)) },
         { label: '세트 연결 해제', run: () => unmapEvidenceGroup(group.evidenceIds), disabled: mappedFeatureIds.length === 0 },
         { label: '세트 삭제', run: () => removeEvidenceGroup(group.evidenceIds), danger: true },
@@ -1315,13 +1553,15 @@
     );
     header.append(titleInput, headerActions);
 
+    // 세트를 구획으로 나눠 보여 준다: 같은 항목에 연달아 연결된 사진끼리, 아직 연결 안 된 사진끼리.
     const body = document.createElement('div');
-    body.className = 'capture-graph-body capture-graph-nodes';
-    body.append(...items.map((item) => captureNode(item, group.evidenceIds)));
+    body.className = 'capture-graph-body';
+    const segments = CaptureITSegments.runs(items);
+    body.append(...segments.map((run, index) => sceneSegment(run, index, segments, group, items)));
 
     if (group.count > 1) {
-      // 작은 세트는 처음부터 펼쳐 화면을 바로 보여 주고, 큰 세트(9장 이상)는 접어 둔다. 사용자가 바꾼 상태는 기억한다.
-      const remembered = expandedSessions.has(group.sessionId) ? true : collapsedSessions.has(group.sessionId) ? false : group.count <= 8;
+      // 구획(어디서 나뉘었는지)이 세트 안에 있으므로 처음부터 펼쳐 둔다. 사용자가 접은 세트는 기억한다.
+      const remembered = !collapsedSessions.has(group.sessionId);
       let expanded = forceExpand || remembered;
       body.hidden = !expanded;
       const toggle = document.createElement('button');
@@ -1490,26 +1730,30 @@
     elements.recentEvidence.replaceChildren(button);
   }
 
-  // 연결 방법 안내 한 줄, 그리고 사진을 골랐으면 "선택한 N장 → 연결 ▾ / 삭제 / 해제" 막대.
+  // 연결 방법 안내 한 줄. "사진 골라서 옮기기·삭제"를 켰으면 "선택한 N장 → 연결 ▾ / 삭제 / 끝내기" 막대.
   function renderLinkTarget() {
     const existing = new Set(editorState.evidence.map((item) => item.id));
     for (const id of [...selectedEvidenceIds]) if (!existing.has(id)) selectedEvidenceIds.delete(id);
     elements.linkTarget.hidden = editorState.evidence.length === 0;
-    if (selectedEvidenceIds.size === 0) {
+    if (!pickMode && selectedEvidenceIds.size === 0) {
       elements.linkTarget.classList.remove('selection-bar');
-      elements.linkTarget.textContent = `세트의 "연결 ▾"에서 어디에 붙일지 고릅니다. 여러 ${itemWord()}에 걸친 녹화는 "화면별로 나눠 만들기", 몇 장만 따로 붙이려면 사진의 "고르기"를 체크하세요.`;
+      elements.linkTarget.textContent = `사진의 "여기부터"를 누르면 그 사진부터 다음 ${itemWord('으로/로')} 나뉩니다. 잘못 나뉜 곳은 "위와 합치기"를 누르세요.`;
       return;
     }
     elements.linkTarget.classList.add('selection-bar');
-    const clear = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button', textContent: '선택 해제' });
-    clear.addEventListener('click', () => { selectedEvidenceIds.clear(); renderEvidence(); });
+    const done = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button', textContent: '끝내기' });
+    done.addEventListener('click', () => { pickMode = false; selectedEvidenceIds.clear(); renderEvidence(); });
+    if (selectedEvidenceIds.size === 0) {
+      elements.linkTarget.replaceChildren(Object.assign(document.createElement('strong'), { textContent: '옮기거나 지울 사진을 체크하세요' }), done);
+      return;
+    }
     const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'text-button danger-text', textContent: '삭제' });
     remove.addEventListener('click', () => removeEvidenceGroup([...selectedEvidenceIds]).then(() => { selectedEvidenceIds.clear(); renderEvidence(); }).catch((error) => setMessage(error.message, true)));
     elements.linkTarget.replaceChildren(
       Object.assign(document.createElement('strong'), { textContent: `선택한 ${selectedEvidenceIds.size}장` }),
       linkTargetMenu(() => [...selectedEvidenceIds], { label: '연결' }),
       remove,
-      clear,
+      done,
     );
   }
 
@@ -1814,8 +2058,8 @@
     const recording = Boolean(session && session.active);
     if (recording) messages.push(docType().capture.recording);
     else if (evidenceCount === 0) messages.push('녹화를 시작하거나, 스크린샷을 이 창에 붙여넣으세요(Ctrl+V).');
-    else if (featureCount === 0) messages.push(`증적 세트의 "연결 ▾"에서 ${itemWord('을/를')} 새로 만들어 연결하세요. 여러 화면에 걸친 녹화는 "화면별로 나눠 만들기"를 고르세요.`);
-    else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. 증적 세트의 "연결 ▾"나 사진을 골라 연결하세요.`);
+    else if (featureCount === 0) messages.push(`첫 사진의 "여기부터"를 누르면 세트 전체가 한 ${itemWord('으로/로')} 묶입니다. 그다음 나눌 사진에서 "여기부터"를 누르세요.`);
+    else if (unmappedFeatures > 0) messages.push(`증적이 없는 ${itemWord('이/가')} ${unmappedFeatures}개 있습니다. 사진의 "여기부터"를 누르면 빈 ${itemWord()}부터 차례로 채웁니다.`);
     else if (unjudged > 0) messages.push(`${verdict.none} 상태인 ${itemWord('이/가')} ${unjudged}개 있습니다.`);
     else messages.push(verdict ? `모두 ${verdict.label}했습니다. 내보내기를 누르세요.` : '내보내기를 누르세요.');
     if (elements.reportDraftSuggestionDialog.open) {
@@ -1985,7 +2229,7 @@
     elements.featureListHeading.textContent = type.item;
     elements.paneLabelFeatures.textContent = type.item;
     elements.addFeature.setAttribute('aria-label', `${type.item} 추가`);
-    elements.noFeature.textContent = `${type.warningText.noItems} 증적의 연결 버튼을 누르면 새로 만들어 연결합니다.`;
+    elements.noFeature.textContent = `${type.warningText.noItems} 녹화를 끝내면 화면별로 나뉘어 만들어지고, 사진의 "여기부터"를 눌러도 만들어집니다.`;
     byId('summary-label-features').textContent = type.item;
     const summary = elements.completionSummaryFeatures.closest('dl');
     summary.classList.toggle('no-verdict', !type.verdict);
@@ -2289,38 +2533,35 @@
   async function mapEvidence(evidence) {
     const feature = await featureForMapping();
     if (!feature) return;
-    await mapEvidenceIdsWithConfirm([evidence.id], feature);
+    await mapEvidenceIdsWithUndo([evidence.id], feature);
   }
 
-  // 다른 테스트케이스에 이미 연결된 사진이 섞여 있으면 옮길지 묻는다. 취소하면 연결 안 된 사진만 연결한다.
-  async function mapEvidenceIdsWithConfirm(evidenceIds, feature) {
-    const elsewhere = evidenceIds
-      .map((id) => editorState.evidence.find((item) => item.id === id))
-      .filter((item) => item && item.featureSpecId && item.featureSpecId !== feature.id);
-    let targetIds = evidenceIds;
-    if (elsewhere.length > 0) {
-      const other = editorState.features.find((item) => item.id === elsewhere[0].featureSpecId);
-      const moveAll = confirm(`이 중 ${elsewhere.length}장은 다른 ${itemWord()}('${other ? other.title : '다른 항목'}')에 연결돼 있습니다.\n확인: '${feature.title}'(으)로 옮깁니다.\n취소: 연결되지 않은 사진만 연결합니다.`);
-      if (!moveAll) {
-        const elsewhereIds = new Set(elsewhere.map((item) => item.id));
-        targetIds = evidenceIds.filter((id) => !elsewhereIds.has(id));
-      }
-    }
+  // 다른 항목에 이미 연결된 사진이 섞여 있어도 묻지 않고 옮긴다. 대신 "되돌리기"를 건넨다(확인 창 한 번을 줄인다).
+  async function mapEvidenceIdsWithUndo(evidenceIds, feature) {
+    const targetIds = evidenceIds.filter((id) => {
+      const item = editorState.evidence.find((entry) => entry.id === id);
+      return item && item.featureSpecId !== feature.id;
+    });
     if (targetIds.length === 0) {
       setMessage('새로 연결할 사진이 없습니다.');
       return;
     }
+    const moved = targetIds.filter((id) => (editorState.evidence.find((item) => item.id === id) || {}).featureSpecId).length;
+    const saved = CaptureITSegments.snapshot(editorState);
     await mapEvidenceIds(targetIds, feature);
     for (const id of targetIds) selectedEvidenceIds.delete(id);
+    if (selectedEvidenceIds.size === 0) pickMode = false;
     renderLinkTarget();
     renderEvidence();
-    setMessage(`'${feature.title}'에 사진 ${targetIds.length}장을 연결했습니다.`);
+    setMessage(`'${feature.title}'에 사진 ${targetIds.length}장을 연결했습니다.${moved ? ` 그중 ${moved}장은 다른 ${itemWord()}에서 옮겼습니다.` : ''}`,
+      false, { label: '되돌리기', run: () => undoLinkChange(saved) });
   }
 
   async function unmapSingleEvidence(evidenceId) {
     const evidence = editorState.evidence.find((item) => item.id === evidenceId);
     if (!evidence) return;
     CaptureITDomain.unmapEvidence(editorState, evidenceId);
+    dropBlankFeatures();
     await CaptureITStorage.putEvidence(evidence);
     await saveReport();
     renderEvidence();
@@ -2342,11 +2583,14 @@
     for (const evidence of mappedItems) {
       CaptureITDomain.unmapEvidence(editorState, evidence.id);
     }
+    dropBlankFeatures();
     for (const evidence of mappedItems) {
       await CaptureITStorage.putEvidence(evidence);
     }
     await saveReport();
     renderEvidence();
+    renderFeatures();
+    renderFeature();
     renderRecommendations();
     renderWorkspace();
   }
@@ -2367,6 +2611,7 @@
   // evidenceIds에 해당하는 evidence를 feature.id의 Test_Result_Set으로 한 번에 이동시킨다(요구사항 3.1~3.4).
   async function mapEvidenceIds(evidenceIds, feature) {
     CaptureITDomain.mapEvidenceBatch(editorState, evidenceIds, feature.id);
+    dropBlankFeatures();
     await persistMappedEvidence(evidenceIds);
     await saveReport();
     renderEvidence();
@@ -2417,6 +2662,7 @@
     }
     editorState.evidence = editorState.evidence.filter((item) => item.id !== evidenceId);
     editorState = CaptureITDomain.createEditorState(editorState.evidence, editorState.features);
+    dropBlankFeatures();
     await CaptureITStorage.deleteEvidence(evidenceId);
     await saveReport();
     renderEvidence();
@@ -2436,6 +2682,7 @@
     }
     editorState.evidence = editorState.evidence.filter((item) => !idSet.has(item.id));
     editorState = CaptureITDomain.createEditorState(editorState.evidence, editorState.features);
+    dropBlankFeatures();
     await Promise.all(evidenceIds.map((id) => CaptureITStorage.deleteEvidence(id)));
     await saveReport();
     renderEvidence();
@@ -2615,9 +2862,9 @@
     await refreshEvidence();
     renderSession();
     renderWorkspace();
-    setMessage(editorState.evidence.length > 0
-      ? `녹화를 종료했습니다. 증적 ${editorState.evidence.length}개를 ${itemWord()}에 연결하세요.`
-      : '녹화를 종료했습니다.');
+    // 방금 찍은 사진을 화면이 바뀐 곳에서 나눠 붙여 둔다. 사용자는 틀린 곳만 고치면 된다(되돌리기 가능).
+    const linked = await autoLinkStoppedSession(stoppedSessionId);
+    if (!linked) setMessage('녹화를 종료했습니다.');
     // Auto_Title_On_Session_Stop: 방금 끝난 세션의 증적 그룹에 한해서만, 세션이 종료되는
     // 이 시점 단 한 번 제목 추천을 자동으로 호출한다(captureGraphCard 재렌더링과는 무관).
     autoRequestSessionTitleForSession(stoppedSessionId);
@@ -3088,6 +3335,15 @@
     return error;
   }
 
+  // 다시 보내기 전에 기다리면서 남은 초를 보여 준다.
+  async function waitBeforeRetry(waitMs, statusText, onStatus) {
+    const waitUntil = Date.now() + waitMs;
+    while (Date.now() < waitUntil) {
+      onStatus(statusText(Math.ceil((waitUntil - Date.now()) / 1000)));
+      await sleep(Math.min(1000, waitUntil - Date.now()));
+    }
+  }
+
   async function sendLlmRequest(payload, settings, maxTokens, onStatus) {
     const adapterRequest = CaptureITLlm.buildAdapterRequest({ ...settings, payload, maxTokens });
     const estimate = CaptureITAiBudget.estimateRequestTokens(adapterRequest.requestBody);
@@ -3101,22 +3357,31 @@
       if (actual) entry.tokens = actual;
       if (response.ok) {
         await setLlmReady(true);
-        return CaptureITLlm.parseAdapterResponse(body);
+        try {
+          return CaptureITLlm.parseAdapterResponse(body);
+        } catch (error) {
+          // 한도에 걸리면 오류(429) 대신 글자 없는 답을 주는 게이트웨이가 있다. 한도는 1분 단위로 풀리므로
+          // 빈 응답도 이번 1분을 다 쓴 것으로 보고 1분 기다렸다 다시 보낸다.
+          // (출력 한도 때문에 빈 것은 기다려도 같으니 그대로 올려 보내 한도를 늘려 다시 요청하게 한다.)
+          if (error.code !== 'EMPTY_RESPONSE' || error.outputLimit) throw error;
+          if (attempt >= 2) {
+            error.message = `${error.message} 1분씩 기다렸다 ${attempt}번 다시 보냈지만 계속 비어 있었습니다.`;
+            throw error;
+          }
+          tokenBudget.exhaust(entry);
+          await waitBeforeRetry(CaptureITAiBudget.retryDelayMs(null, attempt, 429),
+            (seconds) => `빈 응답을 받아 ${seconds}초 뒤 다시 보냄(한도는 1분 단위로 풀림)`, onStatus);
+          continue;
+        }
       }
       const retryable = response.status === 429 || response.status >= 500;
       if (!retryable || attempt >= 2) throw llmHttpError(response, body);
-      // 한도에 걸렸으면 이번 1분은 다 쓴 것으로 보고 기다린다.
-      const retryAfter = response.headers && response.headers.get && response.headers.get('retry-after');
       // 서버가 언제 다시 보내라고 알려 주면 그 말을 따르고, 안 알려 주면 이번 1분은 다 쓴 것으로 본다.
+      const retryAfter = response.headers && response.headers.get && response.headers.get('retry-after');
       if (response.status === 429 && !retryAfter) tokenBudget.exhaust(entry);
-      const waitUntil = Date.now() + CaptureITAiBudget.retryDelayMs(retryAfter, attempt, response.status);
-      while (Date.now() < waitUntil) {
-        const seconds = Math.ceil((waitUntil - Date.now()) / 1000);
-        onStatus(response.status === 429
-          ? `한도에 걸려 ${seconds}초 뒤 다시 보냄(한도는 1분 단위로 풀림)`
-          : `서버 오류로 ${seconds}초 뒤 다시 보냄`);
-        await sleep(Math.min(1000, waitUntil - Date.now()));
-      }
+      await waitBeforeRetry(CaptureITAiBudget.retryDelayMs(retryAfter, attempt, response.status), (seconds) => (response.status === 429
+        ? `한도에 걸려 ${seconds}초 뒤 다시 보냄(한도는 1분 단위로 풀림)`
+        : `서버 오류로 ${seconds}초 뒤 다시 보냄`), onStatus);
     }
   }
 
@@ -3857,7 +4122,11 @@
     elements.reportTitle.focus();
   }
 
-  async function refreshEvidence() {
+  function refreshEvidence() {
+    return serial(refreshEvidenceNow);
+  }
+
+  async function refreshEvidenceNow() {
     const knownIds = new Set(editorState.evidence.map((item) => item.id));
     const evidence = await loadReportEvidence();
     editorState = CaptureITDomain.createEditorState(evidence, editorState.features);
@@ -3941,6 +4210,7 @@
   elements.addFeature.addEventListener('click', () => addFeature().catch((error) => setMessage(error.message, true)));
   elements.toggleSession.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
   elements.stopRecordingBar.addEventListener('click', () => toggleSession().catch((error) => setMessage(error.message, true)));
+  elements.nextSceneBar.addEventListener('click', () => markNextScene().catch((error) => setMessage(error.message, true)));
   elements.imageImport.addEventListener('change', () => {
     const files = [...elements.imageImport.files];
     elements.imageImport.value = '';
@@ -4069,11 +4339,15 @@
       if (message && message.type === 'EVIDENCE_CREATED') refreshEvidence().catch(() => {});
       // 녹화 중인 탭을 닫아 녹화가 끝난 경우 등, 편집기 밖에서 녹화 상태가 바뀌면 다시 읽는다.
       if (message && message.type === 'SESSION_CHANGED') {
-        extensionStorage.get('captureSession').then((stored) => {
+        extensionStorage.get('captureSession').then(async (stored) => {
+          const endedId = session && session.active ? session.id : null;
           session = stored.captureSession || null;
           renderSession();
           renderWorkspace();
-          if (message.reason === 'tab-closed') setMessage('녹화 중인 탭이 닫혀 녹화를 종료했습니다.');
+          if (message.reason !== 'tab-closed') return;
+          setMessage('녹화 중인 탭이 닫혀 녹화를 종료했습니다.');
+          await refreshEvidence();
+          await autoLinkStoppedSession(endedId);
         }).catch(() => {});
       }
     });

@@ -48,14 +48,15 @@ test('수집 대상으로 정한 테스트케이스에 새 증적(녹화·붙여
   assert.match(attach, /return item && !item\.featureSpecId;/, '이미 연결된 증적은 옮기지 않는다');
   assert.match(attach, /CaptureITDomain\.mapEvidenceBatch\(editorState, fresh, feature\.id\)/);
   assert.doesNotMatch(attach, /autoRunAiPipelineForFeature/, '수집마다 AI를 돌리지 않는다');
-  const refresh = functionBody(editor, 'refreshEvidence');
+  assert.match(functionBody(editor, 'refreshEvidence'), /return serial\(refreshEvidenceNow\);/, '연결을 바꾸는 일과 겹치지 않게 한 줄로 세운다');
+  const refresh = functionBody(editor, 'refreshEvidenceNow');
   assert.match(refresh, /const knownIds = new Set\(editorState\.evidence\.map\(\(item\) => item\.id\)\);/);
   assert.match(refresh, /attachToCaptureTarget\(evidence\.filter\(\(item\) => !knownIds\.has\(item\.id\)\)/);
   assert.match(functionBody(editor, 'importImages'), /await attachToCaptureTarget\(addedIds\)/);
   assert.match(functionBody(editor, 'setCaptureTarget'), /report\.captureTargetFeatureId = featureId \|\| null;/);
 });
 
-test('연결은 늘 어디에 붙일지 고른다: 기존 항목 / 새로 만들어 연결 / (세트면) 화면별로 나눠 만들기', () => {
+test('"연결 ▾"는 붙일 곳을 고른다: 기존 항목 / 새로 만들어 연결 / (세트면) 화면별로 나눠 만들기', () => {
   const menu = functionBody(editor, 'linkTargetMenu');
   assert.match(menu, /editorState\.features\.forEach\(\(feature, index\) => \{/, '모든 항목을 보여 준다');
   assert.match(menu, /entry\(`＋ 새 \$\{itemWord\(\)\}로 만들어 연결`, \(\) => linkToNewFeature\(ids\)/);
@@ -63,15 +64,19 @@ test('연결은 늘 어디에 붙일지 고른다: 기존 항목 / 새로 만들
   assert.match(menu, /\(\) => splitIntoFeatures\(ids\)/);
   assert.doesNotMatch(editor, /pendingMapEvidenceIds|setPendingMapping|function mapToFeatureButton/, '말없이 지금 고른 항목에 붙던 방식은 없앤다');
   const split = functionBody(editor, 'splitIntoFeatures');
-  assert.match(split, /const free = evidenceIds\.filter/, '이미 연결된 증적은 그대로 둔다');
+  assert.match(split, /const free = evidenceItems\(evidenceIds\)\.filter\(\(item\) => !item\.featureSpecId\)/, '이미 연결된 증적은 그대로 둔다');
+  assert.match(split, /CaptureITSegments\.assignParts\(editorState, parts, \{ afterFeatureId: options\.afterFeatureId \|\| null \}\)/, '빈 항목부터 채우고 모자라면 새로 만든다');
   assert.doesNotMatch(split, /autoRunAiPipelineForFeature/, '나눠 만들 때 AI를 한꺼번에 돌리지 않는다(분당 한도)');
 });
 
-test('사진은 "고르기"로 여러 장 골라 "선택한 N장 → 연결 ▾"로 한 번에 붙인다', () => {
+test('떨어져 있는 사진은 "고르기"로 여러 장 골라 "선택한 N장 → 연결 ▾"로 한 번에 옮긴다', () => {
   const bar = functionBody(editor, 'renderLinkTarget');
   assert.match(bar, /`선택한 \$\{selectedEvidenceIds\.size\}장`/);
   assert.match(bar, /linkTargetMenu\(\(\) => \[\.\.\.selectedEvidenceIds\], \{ label: '연결' \}\)/);
-  assert.match(functionBody(editor, 'mapEvidenceIdsWithConfirm'), /for \(const id of targetIds\) selectedEvidenceIds\.delete\(id\);/, '연결한 사진은 선택에서 뺀다');
+  const withUndo = functionBody(editor, 'mapEvidenceIdsWithUndo');
+  assert.match(withUndo, /for \(const id of targetIds\) selectedEvidenceIds\.delete\(id\);/, '연결한 사진은 선택에서 뺀다');
+  assert.match(withUndo, /if \(selectedEvidenceIds\.size === 0\) pickMode = false;/, '다 옮기면 고르기를 끝낸다');
+  assert.match(bar, /if \(!pickMode && selectedEvidenceIds\.size === 0\) \{/);
 });
 
 test('검증 내용 등 항목의 칸은 카드에서 입력한다(보고서 표에 들어가는데 입력란이 없어 경고만 떴다)', () => {
@@ -91,9 +96,9 @@ test('녹화 중에만 방금 찍힌 화면을 수집 줄에 보여 준다', () 
   assert.match(functionBody(editor, 'renderRecentEvidence'), /const evidence = session && session\.active \? latestEvidence\(\) : null;/);
 });
 
-test('작은 증적 세트는 처음부터 펼쳐 화면을 바로 보여 준다', () => {
+test('증적 세트는 처음부터 펼쳐 어디서 나뉘었는지 바로 보여 준다(접은 세트는 기억)', () => {
   const body = functionBody(editor, 'captureGraphCard');
-  assert.match(body, /collapsedSessions\.has\(group\.sessionId\) \? false : group\.count <= 8/);
+  assert.match(body, /const remembered = !collapsedSessions\.has\(group\.sessionId\);/);
 });
 
 test('화면 문구에 이모지 아이콘을 쓰지 않는다', () => {
@@ -107,7 +112,7 @@ test('화면 안내는 끌어다 놓기 대신 붙여넣기·이미지 불러오
   for (const text of userText) assert.doesNotMatch(text, /끌어다|드래그/, text);
   assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), /끌어다|드래그/);
   const body = functionBody(editor, 'renderLinkTarget');
-  assert.match(body, /세트의 "연결 ▾"에서 어디에 붙일지 고릅니다/);
+  assert.match(body, /사진의 "여기부터"를 누르면 그 사진부터 다음 \$\{itemWord\('으로\/로'\)\} 나뉩니다/);
 });
 
 test('방금 찍힌 화면의 긴 설명이 수집 줄을 넓혀 녹화 종료 버튼을 화면 밖으로 밀지 않는다(3.1.0 버그)', () => {

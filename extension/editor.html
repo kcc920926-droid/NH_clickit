@@ -85,7 +85,7 @@
           <span id="feature-count" class="pane-count"></span>
           <button id="add-feature" class="text-button" type="button" aria-label="테스트케이스 추가">＋ 추가</button>
         </div>
-        <div id="no-feature" class="empty-note">테스트케이스가 없습니다. 증적의 연결 버튼을 누르면 새로 만들어 연결합니다.</div>
+        <div id="no-feature" class="empty-note">테스트케이스가 없습니다. 녹화를 끝내면 화면별로 나뉘어 만들어지고, 사진의 "여기부터"를 눌러도 만들어집니다.</div>
         <div id="feature-list" class="feature-list" aria-live="polite"></div>
       </section>
     </div>
@@ -110,6 +110,7 @@
   <footer class="status-bar">
     <p id="editor-message" class="message" role="status"></p>
     <span id="readiness-summary" class="readiness"></span>
+    <button id="next-scene-bar" class="button button-quiet" type="button" hidden>다음 장면</button>
     <button id="stop-recording-bar" class="button button-stop" type="button" hidden><span class="stop-glyph" aria-hidden="true"></span>녹화 종료</button>
     <button id="open-export" class="button button-primary" type="button">내보내기</button>
   </footer>
@@ -300,6 +301,7 @@
   <script src="shared/evidence-step-builder.js"></script>
   <script src="shared/evidence-dedupe.js"></script>
   <script src="shared/evidence-split.js"></script>
+  <script src="shared/evidence-segments.js"></script>
   <script src="shared/pointer-marker.js"></script>
   <script src="shared/llm.js"></script>
   <script src="shared/ai-budget.js"></script>

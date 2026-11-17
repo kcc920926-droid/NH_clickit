@@ -102,6 +102,7 @@ textarea { resize: vertical; }
 .stop-glyph { display: inline-block; width: 9px; height: 9px; border-radius: 1px; background: currentColor; }
 .status-bar.is-recording { border-top-color: #ecc5c5; background: #fff8f8; }
 .status-bar.is-recording #open-export { color: var(--ink); border-color: var(--line); background: var(--surface); }
+#next-scene-bar { flex: none; white-space: nowrap; }
 .capture-meta { margin: 0; color: var(--ink-2); font-size: 12px; }
 .capture-meta strong { color: var(--ink); font-weight: 600; }
 .capture-target { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
@@ -167,6 +168,23 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
 .capture-graph-toggle:hover { background: var(--line-2); }
 .capture-graph-toggle svg { width: 16px; height: 16px; }
 .capture-graph-nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin-top: 6px; }
+/* 장면 구획: 세트 안에서 같은 항목에 연달아 연결된 사진들. 연결은 "어디서 끊느냐"만 정한다. */
+.capture-graph-body { display: grid; gap: 6px; margin-top: 6px; }
+.scene-seg { min-width: 0; padding: 6px; border: 1px solid var(--line-2); border-left: 3px solid #c7d1de; border-radius: 4px; background: var(--surface); }
+.scene-seg.active { border-color: #b8c9ef; border-left-color: var(--accent); }
+.scene-seg.unlinked { border-style: dashed; border-color: var(--line); background: var(--bg, #f6f7f9); }
+.scene-seg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.scene-seg-no { flex: none; min-width: 22px; height: 22px; padding: 0 6px; border: 0; border-radius: 11px; color: #fff; background: var(--accent); font-size: 12px; font-weight: 700; line-height: 22px; cursor: pointer; }
+.scene-seg-no:hover { background: var(--accent-ink); }
+.scene-seg-title { flex: 1 1 96px; min-width: 0; padding: 3px 6px; border-color: transparent; background: transparent; font-weight: 600; }
+.scene-seg-title:hover { border-color: var(--line); }
+.scene-seg-title:focus { border-color: var(--accent); background: var(--surface); }
+.scene-seg-label { flex: 1 1 96px; min-width: 0; color: var(--ink-2); font-weight: 600; }
+.scene-seg-count { flex: none; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.scene-merge { flex: none; padding: 2px 6px; white-space: nowrap; }
+.cut-here { display: inline-flex; align-items: center; gap: 3px; margin-right: auto; padding: 2px 4px; font-size: 12px; white-space: nowrap; }
+.cut-here svg { width: 13px; height: 13px; flex: none; }
+.capture-node-footer > :last-child { margin-left: auto; }
 .capture-node { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 4px; border: 1px solid var(--line-2); border-radius: 4px; background: var(--surface); }
 .capture-node:hover { border-color: var(--line); }
 .capture-node img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 3px; background: var(--line-2); cursor: zoom-in; }
@@ -401,6 +419,8 @@ body.file-dragging .paste-zone, body.file-dragging .inbox-panel { border-color: 
   .export-summary div:nth-child(-n+3) { border-bottom: 1px solid var(--line-2); }
   .evidence-detail-body { grid-template-columns: minmax(0, 1fr); }
   .readiness { display: none; }
+  /* 녹화 중에는 "다음 장면"과 "녹화 종료"에 자리를 준다. 내보내기는 녹화가 끝나면 다시 보인다. */
+  .status-bar.is-recording #open-export { display: none; }
   .tpl-thumb { display: none; }
   .template-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -36,13 +36,17 @@
   }
 
   // evidenceList: 같은 세트의 증적(순서 무관). → [{ title, evidenceIds }] 화면이 바뀌는 순서대로.
-  function splitByScreen(evidenceList = []) {
+  // options.unknownTogether: 주소를 모르는 사진(붙여넣기·불러오기)이 연달아 있으면 한 묶음으로 둔다.
+  //   사용자가 "화면별로 나누기"를 직접 고르면 한 장씩 나누지만, 녹화가 끝나 자동으로 나눌 때는
+  //   어디서 화면이 바뀌었는지 모르는 것을 멋대로 쪼개지 않는다.
+  function splitByScreen(evidenceList = [], options = {}) {
     const ordered = [...evidenceList].sort((left, right) => Number(left.sequenceNo || 0) - Number(right.sequenceNo || 0));
     const parts = [];
     let current = null;
     for (const evidence of ordered) {
       const key = screenKey(evidence);
-      if (!current || key === null || current.key === null || key !== current.key) {
+      const sameUnknown = Boolean(options.unknownTogether) && current && key === null && current.key === null;
+      if (!sameUnknown && (!current || key === null || current.key === null || key !== current.key)) {
         current = { key, items: [] };
         parts.push(current);
       }
@@ -51,5 +55,5 @@
     return parts.map((part) => ({ title: screenTitle(part.items), evidenceIds: part.items.map((item) => item.id) }));
   }
 
-  return { screenKey, splitByScreen };
+  return { screenKey, screenTitle, splitByScreen };
 });

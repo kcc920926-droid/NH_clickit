@@ -59,11 +59,14 @@ test('연결 버튼과 고른 테스트케이스 연결은 동일한 도메인 �
     'mapEvidenceIds는 CaptureITDomain.mapEvidenceBatch를 호출해야 한다',
   );
 
-  // 둘 다 다른 테스트케이스에 연결된 사진을 옮길지 묻는 mapEvidenceIdsWithConfirm을 거쳐 mapEvidenceIds로 간다.
-  assert.match(extractFunctionBody(source, 'mapEvidenceIdsWithConfirm'), /await mapEvidenceIds\(targetIds, feature\)/);
+  // 다른 항목에 연결된 사진도 묻지 않고 옮기고 "되돌리기"를 건네는 mapEvidenceIdsWithUndo를 거쳐 mapEvidenceIds로 간다.
+  const withUndo = extractFunctionBody(source, 'mapEvidenceIdsWithUndo');
+  assert.match(withUndo, /await mapEvidenceIds\(targetIds, feature\)/);
+  assert.doesNotMatch(withUndo, /confirm\(/, '옮길지 묻는 확인 창을 띄우지 않는다');
+  assert.match(withUndo, /\{ label: '되돌리기', run: \(\) => undoLinkChange\(saved\) \}/);
   // 사내 DRM이 끌어다 놓기를 막아 끌어다 놓기 연결은 없앴다. "연결 ▾" 메뉴에서 고른 항목도 같은 경로를 탄다.
   const menuBody = extractFunctionBody(source, 'linkTargetMenu');
-  assert.match(menuBody, /entry\(label, \(\) => mapEvidenceIdsWithConfirm\(ids, feature\)/);
+  assert.match(menuBody, /entry\(label, \(\) => mapEvidenceIdsWithUndo\(ids, feature\)/);
   assert.match(extractFunctionBody(source, 'linkToNewFeature'), /await mapEvidenceIds\(evidenceIds, feature\);/);
 });
 
@@ -284,8 +287,8 @@ test('captureGraphCard는 세트 연결 해제/삭제 버튼을 헤더 액션 �
   );
   assert.match(
     captureGraphCardBody,
-    /headerActions\.append\(\s*linkTargetMenu\(group\.evidenceIds, \{ group \}\),/,
-    '매핑 버튼도 같은 헤더 액션 컨테이너 안에 있어야 한다',
+    /headerActions\.append\(\s*overflowMenu\('세트 메뉴', \[/,
+    '세트 머리줄에는 ⋯ 메뉴와 접기만 둔다(연결은 아래 구획에서 한다)',
   );
   assert.match(
     captureGraphCardBody,

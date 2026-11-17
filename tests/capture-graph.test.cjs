@@ -113,7 +113,7 @@ test('Capture_Node는 매핑 상태를 시각화하고 이미지 클릭 시 세�
 
   assert.match(
     script,
-    /function\s+captureNode\(evidence,\s*sequenceEvidenceIds\s*=\s*\[evidence\.id\]\)/,
+    /function\s+captureNode\(evidence,\s*sequenceEvidenceIds\s*=\s*\[evidence\.id\],\s*split\s*=\s*null\)/,
     'captureNode는 세트 이미지 이동을 위한 sequenceEvidenceIds 기본값을 가져야 합니다',
   );
   assert.match(
@@ -121,11 +121,12 @@ test('Capture_Node는 매핑 상태를 시각화하고 이미지 클릭 시 세�
     /node\.classList\.add\('mapped'\)/,
     '매핑된 evidence는 capture-node.mapped로 표시해야 합니다',
   );
-  assert.match(
+  assert.doesNotMatch(
     captureNodeBody,
     /capture-node-mapping-badge/,
-    '매핑된 evidence에는 테스트케이스 매핑 배지가 있어야 합니다',
+    '어느 항목인지는 구획 머리줄이 보여 주므로 사진마다 배지를 달지 않는다',
   );
+  assert.match(extractFunctionBody(script, 'sceneSegment'), /number\.textContent = String\(editorState\.features\.indexOf\(feature\) \+ 1\);/, '구획 머리줄에 항목 번호와 이름을 보여 준다');
   assert.match(
     captureNodeBody,
     /image\.addEventListener\('click',\s*\(event\)\s*=>\s*{[\s\S]*showEvidenceDetail\(evidence\.id,\s*sequenceEvidenceIds\)/,
@@ -199,6 +200,8 @@ test('증적 세트와 화면은 끌어다 놓기 대상이 아니고, 연결은
   assert.doesNotMatch(source, /addEventListener\('dragstart'/);
   assert.doesNotMatch(source, /application\/x-captureit-evidence-ids/);
   assert.doesNotMatch(css, /cursor:\s*grab/);
-  assert.match(extractFunctionBody(source, 'captureGraphCard'), /linkTargetMenu\(group\.evidenceIds, \{ group \}\)/);
-  assert.match(extractFunctionBody(source, 'captureNode'), /toggleEvidenceSelection\(evidence\.id, pickInput\.checked\)/, '사진은 골라서 한 번에 연결한다');
+  assert.match(extractFunctionBody(source, 'captureNode'), /splitHere\(evidence\.id, sequenceEvidenceIds\)/, '사진의 "여기부터"를 눌러 나눈다(끌지 않는다)');
+  assert.match(extractFunctionBody(source, 'sceneSegment'), /mergeSegmentUp\(run\.evidenceIds\[0\], group\.evidenceIds\)/, '구획의 "위와 합치기"를 눌러 합친다');
+  assert.match(extractFunctionBody(source, 'sceneSegment'), /if \(!feature\) head\.append\(linkTargetMenu\(run\.evidenceIds, \{ group \}\)\);/, '연결 안 된 구획은 "연결 ▾"로 붙일 곳을 고를 수 있다');
+  assert.match(extractFunctionBody(source, 'captureNode'), /toggleEvidenceSelection\(evidence\.id, pickInput\.checked\)/, '사진은 골라서 한 번에 옮길 수도 있다');
 });

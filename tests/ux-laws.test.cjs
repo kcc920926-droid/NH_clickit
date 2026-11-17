@@ -54,15 +54,21 @@ test('설명은 기다리지 않고 바로 뜨고, 열린 대화상자 위에도
   assert.match(editor, /CaptureITTooltip\.install\(document\);/);
 });
 
-test("Hick: 증적 세트에는 '연결'과 접기만 밖에 두고 나머지는 ⋯ 메뉴로", () => {
+test("Hick: 증적 세트 머리줄에는 ⋯ 메뉴와 접기만 두고, 연결은 끊는 자리만 누른다", () => {
   const body = functionBody(editor, 'captureGraphCard');
-  assert.match(body, /headerActions\.append\(\s*linkTargetMenu\(group\.evidenceIds, \{ group \}\),\s*overflowMenu\('세트 메뉴'/);
+  assert.match(body, /headerActions\.append\(\s*overflowMenu\('세트 메뉴'/);
+  assert.doesNotMatch(body, /linkTargetMenu\(/, '세트 전체를 한 곳에 붙이는 "연결 ▾"는 머리줄에서 뺐다');
+  assert.match(body, /\{ label: '사진 골라서 옮기기·삭제', run: \(\) => \{ pickMode = true; renderEvidence\(\); \} \}/, '고르기 상자는 필요할 때만 켠다');
   assert.doesNotMatch(body, /iconButton\('세트 삭제'/);
 });
 
-test("Fitts: 연결 버튼은 글자를 붙여 크게, 사진마다 작은 연결 버튼 대신 고르기 상자", () => {
+test("Fitts: 연결 버튼은 글자를 붙여 크게, 사진에는 붙일 곳 고르기 대신 '여기부터' 하나", () => {
   assert.match(functionBody(editor, 'linkTargetMenu'), /trigger\.replaceChildren\(iconSvg\('link'\), options\.label \|\| '연결',/);
-  assert.doesNotMatch(functionBody(editor, 'captureNode'), /linkTargetMenu|mapToFeatureButton/);
+  const node = functionBody(editor, 'captureNode');
+  assert.doesNotMatch(node, /linkTargetMenu|mapToFeatureButton/);
+  assert.match(node, /cut\.replaceChildren\(iconSvg\('scissors'\), '여기부터'\);/);
+  assert.match(node, /if \(split && !pickMode\) \{/, '구획의 첫 사진처럼 나눌 것이 없으면 버튼이 없다');
+  assert.match(node, /if \(pickMode\) \{/, '고르기 상자는 켰을 때만');
 });
 
 test('Tesler: 테스트케이스가 하나뿐이면 고르라고 하지 않고 그리로 연결', () => {
